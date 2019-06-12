@@ -215,24 +215,23 @@ void RootOpticsElement::RenderPreview(const SLensFlareRenderParam* pParam, const
 	if (!pParam->IsValid())
 		return;
 
-	_smart_ptr<CRenderView> pRenderView = pParam->passInfo.GetRenderView();
-	std::shared_ptr<CGraphicsPipeline> pGraphicsPipeline = pRenderView->GetGraphicsPipeline();
-
 	if (gcpRendD3D->m_pRT->IsRenderThread())
 	{
-		return RT_RenderPreview(vPos, pGraphicsPipeline);
+		return RT_RenderPreview(vPos, pParam);
 	}
 
+	SLensFlareRenderParam param = *pParam;
 	gcpRendD3D->m_pRT->ExecuteRenderThreadCommand([=]
 	{
-		pGraphicsPipeline->SetCurrentRenderView(pRenderView.get());
-		RT_RenderPreview(vPos, pGraphicsPipeline);
+		std::shared_ptr<CGraphicsPipeline> pGraphicsPipeline = param.pRenderView->GetGraphicsPipeline();
+		pGraphicsPipeline->SetCurrentRenderView(param.pRenderView);
+		RT_RenderPreview(vPos, &param);
 	}, ERenderCommandFlags::None);
 }
 
-void RootOpticsElement::RT_RenderPreview(const Vec3& vPos, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline)
+void RootOpticsElement::RT_RenderPreview(const Vec3& vPos, const SLensFlareRenderParam* pParam)
 {
-	CRY_PROFILE_REGION(PROFILE_RENDERER, "RootOpticsElement::RT_RenderPreview");
+	CRY_PROFILE_SECTION(PROFILE_RENDERER, "RootOpticsElement::RT_RenderPreview");
 
 	SFlareLight light;
 	light.m_vPos = vPos;
@@ -254,9 +253,9 @@ void RootOpticsElement::RT_RenderPreview(const Vec3& vPos, const std::shared_ptr
 		viewport.Height = float(pDstRT->GetHeight());
 		viewport.MinDepth = 0.0f;
 		viewport.MaxDepth = 1.0f;
-
+		
 		SRenderViewInfo viewInfo[CCamera::eEye_eCount];
-		size_t viewInfoCount = pGraphicsPipeline->GenerateViewInfo(viewInfo);
+		size_t viewInfoCount = pParam->pRenderView->GetGraphicsPipeline()->GenerateViewInfo(viewInfo);
 
 		std::vector<CPrimitiveRenderPass*> prePasses;
 
@@ -265,12 +264,12 @@ void RootOpticsElement::RT_RenderPreview(const Vec3& vPos, const std::shared_ptr
 		previewPass.SetViewport(viewport);
 		previewPass.BeginAddingPrimitives();
 
-		if (ProcessAll(previewPass, prePasses, light, viewInfo, viewInfoCount, true, bIgnoreOcclusionQueries))
+		if (ProcessAll(pParam->pRenderView->GetGraphicsPipeline().get(), previewPass, prePasses, light, viewInfo, viewInfoCount, true, bIgnoreOcclusionQueries))
 			previewPass.Execute();
 	}
 }
 
-bool RootOpticsElement::ProcessAll(CPrimitiveRenderPass& targetPass, std::vector<CPrimitiveRenderPass*>& prePasses, const SFlareLight& light, const SRenderViewInfo* pViewInfo, int viewInfoCount, bool bForceRender, bool bUpdateOcclusion)
+bool RootOpticsElement::ProcessAll(CGraphicsPipeline* pGraphicsPipeline, CPrimitiveRenderPass& targetPass, std::vector<CPrimitiveRenderPass*>& prePasses, const SFlareLight& light, const SRenderViewInfo* pViewInfo, int viewInfoCount, bool bForceRender, bool bUpdateOcclusion)
 {
 	CRY_ASSERT(IsGroupEnabled() && (viewInfoCount > 0) && (viewInfoCount <= CCamera::eEye_eCount));
 
@@ -321,6 +320,7 @@ bool RootOpticsElement::ProcessAll(CPrimitiveRenderPass& targetPass, std::vector
 	}
 
 	SPreparePrimitivesContext context(targetPass, prePasses);
+	context.pGraphicsPipeline = pGraphicsPipeline;
 	context.pViewInfo = pViewInfo;
 	context.viewInfoCount = viewInfoCount;
 	context.lightWorldPos = vSrcWorldPos;

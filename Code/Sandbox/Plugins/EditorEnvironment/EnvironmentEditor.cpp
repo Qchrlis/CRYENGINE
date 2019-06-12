@@ -76,12 +76,14 @@ CEnvironmentEditor::CEnvironmentEditor()
 	, m_pPreset(nullptr)
 	, m_controller(*this)
 {
-	AddToMenu(CEditor::MenuItems::SaveAs);
-	AddToMenu(CEditor::MenuItems::EditMenu);
-	AddToMenu(CEditor::MenuItems::Undo);
-	AddToMenu(CEditor::MenuItems::Redo);
+	RegisterActions();
+	AddToMenu({ CEditor::MenuItems::SaveAs, CEditor::MenuItems::EditMenu, CEditor::MenuItems::Undo, CEditor::MenuItems::Redo });
+}
 
-	RegisterDockingWidgets();
+void CEnvironmentEditor::RegisterActions()
+{
+	RegisterAction("general.undo", &CEnvironmentEditor::OnUndo);
+	RegisterAction("general.redo", &CEnvironmentEditor::OnRedo);
 }
 
 std::unique_ptr<IAssetEditingSession> CEnvironmentEditor::CreateEditingSession()
@@ -97,21 +99,19 @@ ITimeOfDay::IPreset* CEnvironmentEditor::GetPreset() const
 	return m_pPreset;
 }
 
-void CEnvironmentEditor::RegisterDockingWidgets()
+void CEnvironmentEditor::OnInitialize()
 {
-	EnableDockingSystem();
-
 	RegisterDockableWidget("Constants", [=]() { return new CConstantsWidget(m_controller); }, true, false);
 	RegisterDockableWidget("Variables", [=]() { return new CVariablesWidget(m_controller); }, true, false);
 	RegisterDockableWidget("Curve Editor", [=]() { return new CCurveEditorWidget(m_controller); }, true, false);
 }
 
-void CEnvironmentEditor::CreateDefaultLayout(CDockableContainer* pSender)
+void CEnvironmentEditor::OnCreateDefaultLayout(CDockableContainer* pSender, QWidget* pAssetBrowser)
 {
-	QWidget* pConstantsTab = pSender->SpawnWidget("Constants");
+	QWidget* pConstantsTab = pSender->SpawnWidget("Constants", pAssetBrowser, QToolWindowAreaReference::Right);
 	QWidget* pVariablesTab = pSender->SpawnWidget("Variables", pConstantsTab, QToolWindowAreaReference::Right);
 	pSender->SpawnWidget("Curve Editor", pVariablesTab, QToolWindowAreaReference::Right);
-	pSender->SetSplitterSizes(pConstantsTab, { 1, 1, 4 });
+	pSender->SetSplitterSizes(pConstantsTab, { 1, 1, 1, 4 });
 
 	if (m_pPreset)
 	{

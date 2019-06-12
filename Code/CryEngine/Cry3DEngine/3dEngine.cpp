@@ -172,8 +172,6 @@ C3DEngine::C3DEngine(ISystem* pSystem)
 
 	m_pSun = 0;
 	m_nFlags = 0;
-	for (int skyTypeIdx = 0; skyTypeIdx < eSkyType_NumSkyTypes; ++skyTypeIdx)
-		m_pSkyMat[skyTypeIdx] = 0;
 	m_pTerrainWaterMat = 0;
 	m_nWaterBottomTexId = 0;
 	m_vSunDir = Vec3(5.f, 5.f, DISTANCE_TO_THE_SUN);
@@ -205,11 +203,8 @@ C3DEngine::C3DEngine(ISystem* pSystem)
 	m_fMaxViewDistLowSpec = 1000;
 	m_fTerrainDetailMaterialsViewDistRatio = 1.f;
 
-	m_bSkyMatOverride = false;
-	m_fSkyBoxAngle[0] = 0;
-	m_fSkyBoxStretching = 0;
-	m_vSkyBoxExposure[0].Set(0, 0, 0);
-	m_vSkyBoxOpacity[0].Set(0, 0, 0);
+	for (int skyTypeIdx = 0; skyTypeIdx < eSkySpec_NumSkySpecs; ++skyTypeIdx)
+		m_pSkyMat[skyTypeIdx] = nullptr;
 
 	m_pGlobalWind = 0;
 	m_vWindSpeed(1, 0, 0);
@@ -719,7 +714,7 @@ void C3DEngine::Tick()
 	TickDelayedRenderNodeDeletion();
 
 	// clear stored cameras from last frame
-	m_RenderingPassCameras[nThreadID].resize(0);
+	m_RenderingPassCameras[nThreadID].clear();
 }
 
 void C3DEngine::ProcessCVarsChange()
@@ -1183,15 +1178,18 @@ void C3DEngine::UpdateRenderingCamera(const char* szCallerName, const SRendering
 
 #endif
 
+	const CCamera* pAuxCamera = nullptr;
 	// set the camera if e_cameraFreeze is not set
 	if (GetCVars()->e_CameraFreeze || GetCVars()->e_CoverageBufferDebugFreeze)
 	{
 		DrawSphere(GetRenderingCamera().GetPosition(), .05f);
 
-		// alwasy set camera to request postion for the renderer, allows debugging with e_camerafreeze
+		// always set camera to request position for the renderer, allows debugging with e_cameraFreeze
+		const CCamera& currentCamera = gEnv->pSystem->GetViewCamera();
+		pAuxCamera = &currentCamera;
+
 		if (GetRenderer())
 		{
-			const CCamera& currentCamera = gEnv->pSystem->GetViewCamera();
 			static CCamera previousCamera = gEnv->pSystem->GetViewCamera();
 
 			if (auto pRenderView = passInfo.GetIRenderView())
@@ -1207,6 +1205,8 @@ void C3DEngine::UpdateRenderingCamera(const char* szCallerName, const SRendering
 	{
 		CCamera previousCam = m_RenderingCamera;
 		m_RenderingCamera = newCam;
+
+		pAuxCamera = &m_RenderingCamera;
 
 		// always set camera to request position for the renderer, allows debugging with e_camerafreeze
 		if (GetRenderer())
@@ -1262,6 +1262,11 @@ void C3DEngine::UpdateRenderingCamera(const char* szCallerName, const SRendering
 	for (int i = 0, nSize = m_deferredRenderProxyStreamingPriorityUpdates.size(); i < nSize; ++i)
 	{
 		IRenderNode* pRenderNode = m_deferredRenderProxyStreamingPriorityUpdates[i];
+
+		// Might have been hidden directly after registration
+		if (pRenderNode->IsHidden())
+			continue;
+
 		AABB aabb = pRenderNode->GetBBox();
 		const Vec3& vCamPos = GetRenderingCamera().GetPosition();
 		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, aabb)) * passInfo.GetZoomFactor();
@@ -1273,7 +1278,9 @@ void C3DEngine::UpdateRenderingCamera(const char* szCallerName, const SRendering
 	m_deferredRenderProxyStreamingPriorityUpdates.resize(0);
 
 	if (!gEnv->pRenderer->GetIStereoRenderer() || !gEnv->pRenderer->GetIStereoRenderer()->GetStereoEnabled())
-		gEnv->pRenderer->UpdateAuxDefaultCamera(m_RenderingCamera);
+	{
+		gEnv->pRenderer->UpdateAuxDefaultCamera(*pAuxCamera);
+	}
 }
 
 void C3DEngine::PrepareOcclusion(const CCamera& rCamera, const SGraphicsPipelineKey& cullGraphicsContextKey)
@@ -1421,7 +1428,7 @@ void C3DEngine::CreateDecal(const struct CryEngineDecalInfo& decal)
 			//      if(decalOnRenderNode.ownerInfo.pRenderNode->GetRenderNodeType() != decal.ownerInfo.pRenderNode->GetRenderNodeType())
 			//      continue;
 
-			if (decalOnRenderNode.ownerInfo.pRenderNode->GetRndFlags() & ERF_HIDDEN)
+			if (decalOnRenderNode.ownerInfo.pRenderNode->IsHidden())
 				continue;
 
 			m_pDecalManager->SpawnHierarchical(decalOnRenderNode, NULL);
@@ -1688,7 +1695,7 @@ void C3DEngine::SetSkyLightParameters(const Vec3& sunDir, const Vec3& sunIntensi
 	skyCond.m_sunDirection = sunDir;
 
 	m_pSkyLightManager->SetSkyDomeCondition(skyCond);
-	if (forceImmediateUpdate && GetSkyType() == eSkyType_HDRSky)
+	if (forceImmediateUpdate)
 		m_pSkyLightManager->FullUpdate();
 }
 
@@ -2976,7 +2983,7 @@ IRenderNode* C3DEngine::CreateRenderNode(EERType type)
 
 void C3DEngine::DeleteRenderNode(IRenderNode* pRenderNode)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	UnRegisterEntityDirect(pRenderNode);
 
@@ -3837,7 +3844,7 @@ bool C3DEngine::IsVisAreasConnected(IVisArea* pArea1, IVisArea* pArea2, int nMax
 	return false;
 }
 
-bool C3DEngine::IsOutdoorVisible()
+bool C3DEngine::IsOutdoorVisible() const
 {
 	if (m_pObjManager && m_pVisAreaManager)
 		return m_pVisAreaManager->IsOutdoorAreasVisible();
@@ -4305,7 +4312,7 @@ void C3DEngine::SetStreamableListener(IStreamedObjectListener* pListener)
 
 void C3DEngine::PrecacheLevel(bool bPrecacheAllVisAreas, Vec3* pPrecachePoints, int nPrecachePointsNum)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (GetVisAreaManager())
 		GetVisAreaManager()->PrecacheLevel(bPrecacheAllVisAreas, pPrecachePoints, nPrecachePointsNum);
@@ -4470,16 +4477,16 @@ void C3DEngine::SetGlobalParameter(E3DEngineParameter param, const Vec3& v)
 		SetPostEffectParam("ColorGrading_GrainAmount", m_fGrainAmount);
 		break;
 	case E3DPARAM_SKY_SKYBOX_ANGLE: // sky box rotation
-		m_fSkyBoxAngle[0] = fValue;
+		m_fSkyBoxAngle = fValue;
 		break;
 	case E3DPARAM_SKY_SKYBOX_STRETCHING: // sky box stretching
 		m_fSkyBoxStretching = fValue;
 		break;
-	case E3DPARAM_SKY_SKYBOX_EXPOSURE:
-		m_vSkyBoxExposure[0] = v;
+	case E3DPARAM_SKY_SKYBOX_EMITTANCE:
+		m_vSkyBoxExposure = v;
 		break;
-	case E3DPARAM_SKY_SKYBOX_OPACITY:
-		m_vSkyBoxOpacity[0] = v;
+	case E3DPARAM_SKY_SKYBOX_FILTER:
+		m_vSkyBoxOpacity = v;
 		break;
 	case E3DPARAM_HDR_FILMCURVE_SHOULDER_SCALE:
 		m_vHDRFilmCurveParams.x = v.x;
@@ -4689,16 +4696,16 @@ void C3DEngine::GetGlobalParameter(E3DEngineParameter param, Vec3& v)
 		v = Vec3(m_moonRotationLatitude, m_moonRotationLongitude, 0);
 		break;
 	case E3DPARAM_SKY_SKYBOX_ANGLE:
-		v = Vec3(m_fSkyBoxAngle[m_bSkyMatOverride], 0, 0);
+		v = Vec3(m_fSkyBoxAngle, 0, 0);
 		break;
 	case E3DPARAM_SKY_SKYBOX_STRETCHING:
 		v = Vec3(m_fSkyBoxStretching, 0, 0);
 		break;
-	case E3DPARAM_SKY_SKYBOX_EXPOSURE:
-		v = m_vSkyBoxExposure[m_bSkyMatOverride];
+	case E3DPARAM_SKY_SKYBOX_EMITTANCE:
+		v = m_vSkyBoxExposure;
 		break;
-	case E3DPARAM_SKY_SKYBOX_OPACITY:
-		v = m_vSkyBoxOpacity[m_bSkyMatOverride];
+	case E3DPARAM_SKY_SKYBOX_FILTER:
+		v = m_vSkyBoxOpacity;
 		break;
 	case E3DPARAM_OCEANFOG_COLOR:
 		v = m_oceanFogColor;
@@ -4848,7 +4855,7 @@ void C3DEngine::SetCachedShadowBounds(const AABB& shadowBounds, float fAdditiona
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::SetRecomputeCachedShadows(uint nUpdateStrategy)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	m_nCachedShadowsUpdateStrategy = nUpdateStrategy;
 
 	if (IRenderer* const pRenderer = GetRenderer())
@@ -4877,11 +4884,9 @@ void C3DEngine::SetRecomputeCachedShadows(IRenderNode* pNode, uint updateStrateg
 
 	if (IRenderer* const pRenderer = GetRenderer())
 	{
-		if (GetCVars()->e_DynamicDistanceShadows != 0 && pNode && pNode->m_pOcNode != nullptr)
+		if (GetCVars()->e_DynamicDistanceShadows != 0 && pNode)
 		{
-			ERNListType nodeListType = IRenderNode::GetRenderNodeListId(pNode->GetRenderNodeType());
-
-			pNode->m_pOcNode->MarkAsUncompiled(nodeListType);
+			pNode->MarkAsUncompiled();
 		}
 	}
 }
@@ -5293,15 +5298,17 @@ void C3DEngine::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPhys
 		for (size_t i = 0; i < m_lstStaticLights.size(); ++i)
 		{
 			ILightSource* pLight = m_lstStaticLights[i];
-			if (pLight->GetLayerId() == nLayerId)
-				pLight->SetRndFlags(ERF_HIDDEN, !bActivate);
+
+			if (pLight->GetLayerId() == nLayerId || nLayerId == uint16(~0))
+				if (pLight != m_pSun) // TODO: e_Sun is the CVar controlling visibility of the sun
+					pLight->SetRndFlags(ERF_HIDDEN, !bActivate);
 		}
 	}
 }
 
 bool C3DEngine::IsObjectsLayerHidden(uint16 nLayerId, const AABB& objBox)
 {
-	if (IsAreaActivationInUse() && nLayerId && nLayerId < 0xFFFF)
+	if (IsAreaActivationInUse() && nLayerId && nLayerId < uint16(~0))
 	{
 		m_arrObjectLayersActivity.CheckAllocated(nLayerId + 1);
 
@@ -5361,13 +5368,13 @@ void C3DEngine::PrecacheRenderNode(IRenderNode* pObj, float fEntDistanceReal)
 
 	if (m_pObjManager)
 	{
-		auto dwOldRndFlags = pObj->m_dwRndFlags;
-		pObj->m_dwRndFlags &= ~ERF_HIDDEN;
+		auto dwOldRndFlags = pObj->GetRndFlags();
+		pObj->SetRndFlags(ERF_HIDDEN, false);
 
 		SRenderingPassInfo passInfo = SRenderingPassInfo::CreateGeneralPassRenderingInfo(SGraphicsPipelineKey::BaseGraphicsPipelineKey, gEnv->pSystem->GetViewCamera());
 		m_pObjManager->UpdateRenderNodeStreamingPriority(pObj, fEntDistanceReal, 1.0f, fEntDistanceReal < GetFloatCVar(e_StreamCgfFastUpdateMaxDistance), passInfo, true);
 
-		pObj->m_dwRndFlags = dwOldRndFlags;
+		pObj->SetRndFlags(dwOldRndFlags);
 	}
 }
 
@@ -5682,7 +5689,7 @@ CCamera* C3DEngine::GetRenderingPassCamera(const CCamera& rCamera)
 {
 	threadID nThreadID = 0;
 	gEnv->pRenderer->EF_Query(EFQ_RenderThreadList, nThreadID);
-	CCamera* pCamera = ::new(m_RenderingPassCameras[nThreadID].push_back_new())CCamera(rCamera);
+	CCamera* pCamera = m_RenderingPassCameras[nThreadID].push_back_new(rCamera);
 	return pCamera;
 }
 
@@ -6467,10 +6474,6 @@ void C3DEngine::RenderRenderNode_ShadowPass(IShadowCaster* pShadowCaster, const 
 	CRY_ASSERT(passInfo.IsShadowPass());
 
 	IRenderNode* pRenderNode = static_cast<IRenderNode*>(pShadowCaster);
-	if ((pRenderNode->m_dwRndFlags & ERF_HIDDEN) != 0)
-	{
-		return;
-	}
 
 	int nStaticObjectLod = -1;
 	if (passInfo.GetShadowMapType() == SRenderingPassInfo::SHADOW_MAP_CACHED)
@@ -6592,7 +6595,7 @@ void C3DEngine::AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRe
 	}
 
 	if (!(dwRndFlags & ERF_RENDER_ALWAYS) && !(dwRndFlags & ERF_CASTSHADOWMAPS))
-		if (GetCVars()->e_ObjFastRegister && pEnt->m_pOcNode && ((COctreeNode*)pEnt->m_pOcNode)->IsRightNode(aabb, fObjRadiusSqr, pEnt->m_fWSMaxViewDist))
+		if (GetCVars()->e_ObjFastRegister && pEnt->GetParent() && ((COctreeNode*)pEnt->GetParent())->IsRightNode(aabb, fObjRadiusSqr, pEnt->m_fWSMaxViewDist))
 		{
 			// same octree node
 			Vec3 vEntCenter = GetEntityRegisterPoint(pEnt);
@@ -6612,7 +6615,7 @@ void C3DEngine::AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRe
 			}
 		}
 
-	if (pEnt->m_pOcNode)
+	if (pEnt->GetParent())
 	{
 		UnRegisterEntityImpl(pEnt);
 	}
@@ -6621,7 +6624,7 @@ void C3DEngine::AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRe
 		//  Temporary solution: Force streaming priority update for objects that was not registered before
 		//  and was not visible before since usual prediction system was not able to detect them
 
-		if ((uint32)pEnt->GetDrawFrame(0) < nFrameID - 16)
+		if (!pEnt->IsHidden() && (uint32)pEnt->GetDrawFrame(0) < nFrameID - 16)
 		{
 			// defer the render node streaming priority update still we have a correct 3D Engine camera
 			int nElementID = m_deferredRenderProxyStreamingPriorityUpdates.Find(pEnt);
@@ -6652,7 +6655,7 @@ void C3DEngine::AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRe
 		{
 			if (pStatObj->m_bHaveOcclusionProxy)
 			{
-				pEnt->m_dwRndFlags |= ERF_GOOD_OCCLUDER;
+				pEnt->SetRndFlags(ERF_GOOD_OCCLUDER, true);
 				pEnt->m_nInternalFlags |= IRenderNode::HAS_OCCLUSION_PROXY;
 			}
 		}
@@ -6688,7 +6691,7 @@ void C3DEngine::AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRe
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	if (pEnt->m_dwRndFlags & ERF_OUTDOORONLY || !(m_pVisAreaManager && m_pVisAreaManager->SetEntityArea(pEnt, aabb, fObjRadiusSqr)))
+	if (pEnt->GetRndFlags() & ERF_OUTDOORONLY || !(m_pVisAreaManager && m_pVisAreaManager->SetEntityArea(pEnt, aabb, fObjRadiusSqr)))
 	{
 		if (m_pObjectsTree)
 		{
@@ -6737,10 +6740,10 @@ bool C3DEngine::UnRegisterEntityImpl(IRenderNode* pEnt)
 	bool bFound = false;
 	//pEnt->PhysicalizeFoliage(false);
 
-	if (pEnt->m_pOcNode)
-		bFound = ((COctreeNode*)pEnt->m_pOcNode)->DeleteObject(pEnt);
+	if (pEnt->GetParent())
+		bFound = ((COctreeNode*)pEnt->GetParent())->DeleteObject(pEnt);
 
-	if (pEnt->m_dwRndFlags & ERF_RENDER_ALWAYS || (eRenderNodeType == eERType_Light) || (eRenderNodeType == eERType_FogVolume))
+	if (pEnt->GetRndFlags() & ERF_RENDER_ALWAYS || (eRenderNodeType == eERType_Light) || (eRenderNodeType == eERType_FogVolume))
 	{
 		m_lstAlwaysVisible.Delete(pEnt);
 	}
@@ -6774,7 +6777,7 @@ Vec3 C3DEngine::GetEntityRegisterPoint(IRenderNode* pEnt)
 
 	Vec3 vPoint;
 
-	if (pEnt->m_dwRndFlags & ERF_REGISTER_BY_POSITION)
+	if (pEnt->GetRndFlags() & ERF_REGISTER_BY_POSITION)
 	{
 		vPoint = pEnt->GetPos();
 		vPoint.z += 0.25f;

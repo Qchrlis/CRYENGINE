@@ -31,6 +31,7 @@
 #include <CrySystem/Profilers/IStatoscope.h>
 #include "DataPatchDownloader.h"
 #include "GameRules.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if !defined (_RELEASE)
 #define TELEMETRY_CHECKS_FOR_OLD_ERRORLOGS (1)
@@ -1395,7 +1396,7 @@ bool CTelemetryCollector::TrySubmitTelemetryProducer(
 			CTelemetryHTTPPostChunkSplitter *pSplit=new CTelemetryHTTPPostChunkSplitter(pInProducer);
 			pInProducer=pSplit;
 			pLargeSubmitData->m_pProducer=pInProducer;
-			cry_strcpy(pLargeSubmitData->m_remoteFileName,"<telemetry producer>");		// can always extract name from post header later if it is needed
+			cry_fixed_size_strcpy(pLargeSubmitData->m_remoteFileName,"<telemetry producer>");		// can always extract name from post header later if it is needed
 
 			assert(inFlags&k_tf_chunked);		// Telemetry producers must be chunked
 			CRY_ASSERT_MESSAGE(inLen<=int(sizeof(pLargeSubmitData->m_postHeaderContents)),"http post header too long, truncating - message liable to get lost");
@@ -1861,11 +1862,11 @@ ITelemetryProducer::EResult CTelemetryHTTPPostChunkSplitter::ProduceTelemetry(
 
 				footer+="\r\n";
 
-				int			footerLength=footer.length();
+				size_t footerLength = footer.length();
 
-				assert(footerLength<=inBufferSize);			// could fix this by splitting footer over multiple produce() calls, but it is an unnecessary complication for the buffer sizes in use
+				assert(footerLength <= static_cast<size_t>(inBufferSize));			// could fix this by splitting footer over multiple produce() calls, but it is an unnecessary complication for the buffer sizes in use
 
-				footerLength=min(footerLength,inBufferSize);
+				footerLength = std::min<size_t>(footerLength, inBufferSize);
 
 				memcpy(pOutBuffer,footer.c_str(),footerLength);
 

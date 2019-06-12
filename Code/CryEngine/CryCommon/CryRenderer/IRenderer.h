@@ -137,6 +137,7 @@ enum ERenderQueryTypes
 	EFQ_IncrementFrameID,
 	EFQ_DeviceLost,
 
+	EFQ_Alloc_APITargets,
 	EFQ_Alloc_APITextures,
 	EFQ_Alloc_APIMesh,
 
@@ -221,6 +222,7 @@ enum class EGraphicsPipelineType
 	Minimum,
 	Billboard,
 	Mobile,
+	CharacterTool,
 };
 
 // Interface to the graphics constant buffers
@@ -561,18 +563,6 @@ namespace gpu_pfx2
 {
 	class IParticleComponentRuntime;
 }
-
-struct CRY_ALIGN(16) SAddParticlesToSceneJob
-{
-	void GetMemoryUsage(ICrySizer* pSizer) const {}
-
-	SShaderItem* pShaderItem;
-	CRenderObject* pRenderObject;
-	IParticleVertexCreator* pVertexCreator = nullptr;
-	gpu_pfx2::IParticleComponentRuntime* pGpuRuntime = nullptr;
-	int16 nCustomTexId;
-	AABB aabb;
-};
 
 #ifdef SUPPORT_HW_MOUSE_CURSOR
 class IHWMouseCursor
@@ -1194,17 +1184,19 @@ struct IRenderer//: public IRendererCallbackServer
 	/////////////////////////////////////////////////////////////////////////////////
 	// External interface for shaders
 	/////////////////////////////////////////////////////////////////////////////////
-	virtual bool EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId, int nCounter = 1) = 0;
-	virtual bool EF_PrecacheResource(SShaderItem* pSI, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter = 1) = 0;
-	virtual bool EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags) = 0;
-	virtual bool EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter = 1) = 0;
-	virtual bool EF_PrecacheResource(IRenderMesh* pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
 	virtual bool EF_PrecacheResource(SRenderLight* pLS, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(IRenderShaderResources* pShaderResources, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(IRenderShaderResources* pShaderResources, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(SShaderItem* pSI, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
+	virtual bool EF_PrecacheResource(IRenderMesh* pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) = 0;
 
 	virtual void PostLevelLoading() = 0;
 	virtual void PostLevelUnload() = 0;
 
-	virtual void EF_AddMultipleParticlesToScene(const SAddParticlesToSceneJob* jobs, size_t numJobs, const SRenderingPassInfo& passInfo) = 0;
+	virtual void EF_AddMultipleParticlesToScene(const struct SAddParticlesToSceneJob* jobs, size_t numJobs, const SRenderingPassInfo& passInfo) = 0;
 	virtual void GetMemoryUsageParticleREs(ICrySizer* pSizer) {}
 
 	/////////////////////////////////////////////////////////////////////////////////
@@ -1303,7 +1295,7 @@ struct IRenderer//: public IRendererCallbackServer
 
 	virtual void         EF_InvokeShadowMapRenderJobs(const SRenderingPassInfo& passInfo, const int nFlags) = 0;
 	virtual IRenderView* GetNextAvailableShadowsView(IRenderView* pMainRenderView, ShadowMapFrustum* pOwnerFrustum) = 0;
-	virtual void         PrepareShadowFrustumForShadowPool(ShadowMapFrustum* pFrustum, uint32 frameID, const SRenderLight& light, uint32* timeSlicedShadowsUpdated) = 0;
+	virtual void         PrepareShadowFrustumForShadowPool(IRenderView* pMainRenderView, ShadowMapFrustum* pFrustum, uint32 frameID, const SRenderLight& light, uint32* timeSlicedShadowsUpdated) = 0;
 	virtual void         PrepareShadowPool(CRenderView* pRenderView) const = 0;
 
 	// Dynamic lights.
@@ -1316,11 +1308,8 @@ struct IRenderer//: public IRendererCallbackServer
 
 	virtual int EF_AddDeferredLight(const SRenderLight& pLight, float fMult, const SRenderingPassInfo& passInfo) = 0;
 
-	// Deferred clip volumes
-	virtual void Ef_AddDeferredGIClipVolume(const IRenderMesh* pClipVolume, const Matrix34& mxTransform) = 0;
-
 	//! Called in between levels to free up memory.
-	virtual void EF_ReleaseDeferredData() = 0;
+	virtual void EF_ReleaseDeferredData(CGraphicsPipeline* pGraphicsPipeline) = 0;
 
 	//! Called in between levels to free up memory.
 	virtual SInputShaderResources* EF_CreateInputShaderResource(IRenderShaderResources* pOptionalCopyFrom = 0) = 0;
@@ -1450,18 +1439,18 @@ struct IRenderer//: public IRendererCallbackServer
 
 	//! This routines uses 2 destination surfaces.  It triggers a backbuffer copy to one of its surfaces, and then copies the other surface to system memory.
 	//! This hopefully will remove any CPU stalls due to the rect lock call since the buffer will already be in system memory when it is called.
-	//! \param pDstARGBA8			Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface).
-	//! \param destinationWidth	Width of the frame to copy.
-	//! \param destinationHeight	Height of the frame to copy.
+	//! \param pDstRGB8          Pointer to a buffer that will hold the captured frame (should be at least 3*dstWidth*dstHeight for RGB surface).
+	//! \param destinationWidth	 Width of the frame to copy.
+	//! \param destinationHeight Height of the frame to copy.
 	//! \note If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions of the surface are used for the copy.
-	virtual bool CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight) = 0;
+	virtual bool CaptureFrameBufferFast(unsigned char* pDstRGB8, int destinationWidth, int destinationHeight) = 0;
 
 	//! Copy a captured surface to a buffer.
-	//! \param pDstARGBA8			Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface).
-	//! \param destinationWidth	Width of the frame to copy.
-	//! \param destinationHeight	Height of the frame to copy.
+	//! \param pDstRGB8          Pointer to a buffer that will hold the captured frame (should be at least 3*dstWidth*dstHeight for RGB surface).
+	//! \param destinationWidth  Width of the frame to copy.
+	//! \param destinationHeight Height of the frame to copy.
 	//! \note If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions of the surface are used for the copy.
-	virtual bool CopyFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight) = 0;
+	virtual bool CopyFrameBufferFast(unsigned char* pDstRGB8, int destinationWidth, int destinationHeight) = 0;
 
 	//! This routine registers a callback address that is called when a new frame is available.
 	//! \param pCapture			Address of the ICaptureFrameListener object.
@@ -1617,7 +1606,8 @@ struct IRenderer//: public IRendererCallbackServer
 	{
 		float fWaitForMain;
 		float fWaitForRender;
-		float fWaitForGPU;
+		float fWaitForGPU_MT;
+		float fWaitForGPU_RT;
 		float fTimeProcessedRT;
 		float fTimeProcessedRTScene;  //!< The part of the render thread between the "SCENE" profiler labels.
 		float fTimeProcessedGPU;
@@ -1769,6 +1759,9 @@ struct SMeshPoolStatistics
 	//! The highest amount of memory allocated within the mesh data pool.
 	size_t nPoolInUsePeak;
 
+	//! The highest amount of memory requested within the mesh data pool.
+	size_t nPoolRequestPeak;
+
 	//! The size of the mesh data size in bytes.
 	size_t nInstancePoolSize;
 
@@ -1778,19 +1771,38 @@ struct SMeshPoolStatistics
 	//! The highest amount of memory allocated within the mesh data pool.
 	size_t nInstancePoolInUsePeak;
 
+	//! The highest amount of memory requested within the mesh data pool.
+	size_t nInstancePoolRequestPeak;
+
+	//! The amount of memory currently in use outside the pool.
+	size_t nUnpooledInUse;
+
+	//! The highest amount of memory allocated without the mesh data pool.
+	size_t nUnpooledInUsePeak;
+
+	//! The highest amount of memory requested without the mesh data pool.
+	size_t nUnpooledRequestPeak;
+
 	size_t nFallbacks;
 	size_t nInstanceFallbacks;
+
 	size_t nFlushes;
 
-	SMeshPoolStatistics()
-		: nPoolSize(),
-		nPoolInUse(),
-		nInstancePoolSize(),
-		nInstancePoolInUse(),
-		nInstancePoolInUsePeak(),
-		nFallbacks(),
-		nInstanceFallbacks(),
-		nFlushes()
+	SMeshPoolStatistics() :
+		nPoolSize(0),
+		nPoolInUse(0),
+		nPoolInUsePeak(0),
+		nPoolRequestPeak(0),
+		nInstancePoolSize(0),
+		nInstancePoolInUse(0),
+		nInstancePoolInUsePeak(0),
+		nInstancePoolRequestPeak(0),
+		nUnpooledInUse(0),
+		nUnpooledInUsePeak(0),
+		nUnpooledRequestPeak(0),
+		nFallbacks(0),
+		nInstanceFallbacks(0),
+		nFlushes(0)
 	{}
 };
 

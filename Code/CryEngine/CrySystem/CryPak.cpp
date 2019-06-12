@@ -38,6 +38,9 @@
 	#include <sys/stat.h>       // fstat, fileno
 //#define fileno(X) ((X)->_Handle)
 #endif
+#if CRY_PLATFORM_LINUX
+	#include <sys/sendfile.h>
+#endif
 
 #if CRY_PLATFORM_ANDROID && defined(ANDROID_OBB)
 	#include <android/asset_manager.h>
@@ -346,7 +349,7 @@ CCryPak::CCryPak(IMiniLog* pLog, PakVars* pPakVars, const bool bLvlRes) :
 	m_renderThreadId(0),
 	m_pWidget(NULL)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 #if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
 	m_HandleSource = 0;
@@ -843,8 +846,8 @@ CCryPak::~CCryPak()
 		for (TAliasList::iterator it = m_arrAliases.begin(); it != cAliasEnd; ++it)
 		{
 			tNameAlias* tTemp = (*it);
-			SAFE_DELETE(tTemp->szName);
-			SAFE_DELETE(tTemp->szAlias);
+			SAFE_DELETE_ARRAY(tTemp->szName);
+			SAFE_DELETE_ARRAY(tTemp->szAlias);
 			delete tTemp;
 		}
 	}
@@ -1272,6 +1275,28 @@ bool CCryPak::CopyFileOnDisk(const char* source, const char* dest, bool bFailIfE
 {
 #if CRY_PLATFORM_WINDOWS
 	return ::CopyFile((LPCSTR)source, (LPCSTR)dest, bFailIfExist) == TRUE;
+#elif CRY_PLATFORM_LINUX
+	if (bFailIfExist && IsFileExist(dest, eFileLocation_OnDisk))
+		return false;
+
+	const SignedFileSize sourceSize = GetFileSizeOnDisk(source);
+	if (sourceSize < 0)
+		return false;
+
+	FILE* hSource = fopen(source, "r");
+	FILE* hDestination = fopen(dest, "w");
+	if (hSource == nullptr || hDestination == nullptr)
+	{
+		fclose(hSource);
+		fclose(hDestination);
+		return false;
+	}
+
+	const bool success = (size_t(sourceSize) != sendfile(fileno(hDestination), fileno(hSource), nullptr, size_t(sourceSize)));
+	fclose(hSource);
+	fclose(hDestination);
+
+	return success;
 #else
 	if (bFailIfExist && IsFileExist(dest, eFileLocation_OnDisk))
 		return false;
@@ -1402,7 +1427,7 @@ ICryPak::SignedFileSize CCryPak::GetFileSizeOnDisk(const char* filename)
 #else
 	struct stat desc;
 
-	if (stat(filename, &desc) == 0)
+	if (stat(filename, &desc) == 0 && !(desc.st_mode & S_IFDIR))
 	{
 		return (ICryPak::SignedFileSize)desc.st_size;
 	}
@@ -1437,7 +1462,7 @@ bool CCryPak::IsFileCompressed(const char* filename)
 //////////////////////////////////////////////////////////////////////////
 FILE* CCryPak::FOpenRaw(const char* pName, const char* mode)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(pName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, pName);
 	PROFILE_DISK_OPEN;
 	return CIOWrapper::Fopen(pName, mode);
 }
@@ -1445,7 +1470,7 @@ FILE* CCryPak::FOpenRaw(const char* pName, const char* mode)
 //////////////////////////////////////////////////////////////////////////
 FILE* CCryPak::FOpen(const char* pName, const char* szMode, char* szFileGamePath, int nLen)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(pName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, pName);
 
 	SAutoCollectFileAcessTime accessTime(this);
 
@@ -1472,7 +1497,7 @@ FILE* CCryPak::FOpen(const char* pName, const char* szMode, char* szFileGamePath
 //////////////////////////////////////////////////////////////////////////
 FILE* CCryPak::FOpen(const char* pName, const char* szMode, unsigned nInputFlags)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(pName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, pName);
 
 	if (strlen(pName) >= CryPathString::MAX_SIZE)
 		return 0;
@@ -1507,9 +1532,6 @@ FILE* CCryPak::FOpen(const char* pName, const char* szMode, unsigned nInputFlags
 #else
 	unsigned nOSFlags = _O_BINARY | _O_RDONLY;
 #endif
-
-	//Timur, Try direct zip operation always.
-	nInputFlags |= FOPEN_HINT_DIRECT_OPERATION;
 
 	int nAdjustFlags = 0;
 
@@ -1570,8 +1592,10 @@ FILE* CCryPak::FOpen(const char* pName, const char* szMode, unsigned nInputFlags
 
 		case 'x':
 		case 'X':
-			nInputFlags |= FOPEN_HINT_DIRECT_OPERATION;
+			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "Using deprecated file open mode 'x' on file %s.", pName);
 			break;
+		default:
+			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "Using unknown file open mode '%c' on file %s.", *pModeChar, pName);
 		}
 
 	if (nInputFlags & FLAGS_PATH_REAL)
@@ -1699,12 +1723,7 @@ FILE* CCryPak::FOpen(const char* pName, const char* szMode, unsigned nInputFlags
 
 	CheckFileAccessDisabled(fullPath, szMode);
 
-
 	size_t nFile;
-	if (pFileData != NULL && (nInputFlags & FOPEN_HINT_DIRECT_OPERATION) && !pFileData->m_pZip->IsInMemory())
-	{
-		nOSFlags |= CZipPseudoFile::_O_DIRECT_OPERATION;
-	}
 	nOSFlags |= (archiveFlags & FLAGS_REDIRECT_TO_DISC);
 
 	// try to open the pseudofile from one of the zips, make sure there is no user alias
@@ -1799,11 +1818,6 @@ bool CCryPak::WillOpenFromPak(const char* szPath)
 ZipDir::FileEntry* CCryPak::FindPakFileEntry(const char* szPath, unsigned int& nArchiveFlags, ZipDir::CachePtr* pZip, bool bSkipInMemoryPaks)
 {
 	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
-
-#if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
-	// Timur, is it safe?
-	//replaceDoublePathFilename((char*)szName);
-#endif
 
 	unsigned nNameLen = (unsigned)strlen(szPath);
 	AUTO_READLOCK(m_csZips);
@@ -2007,7 +2021,7 @@ size_t CCryPak::FWrite(const void* data, size_t length, size_t elems, FILE* hFil
 //////////////////////////////////////////////////////////////////////////
 size_t CCryPak::FReadRaw(void* pData, size_t nSize, size_t nCount, FILE* hFile)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	SAutoCollectFileAcessTime accessTime(this);
 
@@ -2026,7 +2040,7 @@ size_t CCryPak::FReadRaw(void* pData, size_t nSize, size_t nCount, FILE* hFile)
 //////////////////////////////////////////////////////////////////////////
 size_t CCryPak::FReadRawAll(void* pData, size_t nFileSize, FILE* hFile)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	SAutoCollectFileAcessTime accessTime(this);
 	{
@@ -2050,7 +2064,7 @@ size_t CCryPak::FReadRawAll(void* pData, size_t nFileSize, FILE* hFile)
 //////////////////////////////////////////////////////////////////////////
 void* CCryPak::FGetCachedFileData(FILE* hFile, size_t& nFileSize)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	SAutoCollectFileAcessTime accessTime(this);
 	{
@@ -2357,7 +2371,7 @@ int CCryPak::FindClose(intptr_t handle)
 //////////////////////////////////////////////////////////////////////////
 bool CCryPak::LoadPakToMemory(const char* pName, ICryPak::EInMemoryPakLocation nLoadPakToMemory, IMemoryBlock* pMemoryBlock)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(pName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, pName);
 	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Load Pak To Memory: %s", pName);
 
 	CryPathString pakFile = pName;
@@ -2386,7 +2400,7 @@ bool CCryPak::LoadPakToMemory(const char* pName, ICryPak::EInMemoryPakLocation n
 //////////////////////////////////////////////////////////////////////////
 void CCryPak::LoadPaksToMemory(int nMaxPakSize, bool bLoadToMemory)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Load Paks To Memory");
 	AUTO_MODIFYLOCK(m_csZips);
 	for (ZipArray::reverse_iterator itZip = m_arrZips.rbegin(); itZip != m_arrZips.rend(); ++itZip)
@@ -2908,7 +2922,7 @@ int CZipPseudoFile::FSeek(long nOffset, int nMode)
 //////////////////////////////////////////////////////////////////////////
 size_t CZipPseudoFile::FRead(void* pDest, size_t nSize, size_t nCount, FILE* hFile)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!GetFile())
 		return 0;
@@ -2966,7 +2980,7 @@ size_t CZipPseudoFile::FRead(void* pDest, size_t nSize, size_t nCount, FILE* hFi
 //////////////////////////////////////////////////////////////////////////
 size_t CZipPseudoFile::FReadAll(void* pDest, size_t nFileSize, FILE* hFile)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!GetFile())
 		return 0;
@@ -2988,7 +3002,7 @@ size_t CZipPseudoFile::FReadAll(void* pDest, size_t nFileSize, FILE* hFile)
 //////////////////////////////////////////////////////////////////////////
 void* CZipPseudoFile::GetFileData(size_t& nFileSize, FILE* hFile)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!GetFile())
 		return 0;
@@ -3591,11 +3605,12 @@ bool CCryPak::MakeDir(const char* szPath, bool bGamePathMapping)
 		{
 			*q++ = *p++;
 		}
-		// If empty string, nothing to create
-		if (*newPath != 0)
+
+		if (*newPath != 0 && !CryCreateDirectory(newPath))
 		{
-			CryCreateDirectory(newPath);
+			return false;
 		}
+
 		if (*p)
 		{
 			if (*p != g_cNonNativeSlash)
@@ -3610,7 +3625,7 @@ bool CCryPak::MakeDir(const char* szPath, bool bGamePathMapping)
 		}
 	}
 
-	return CryCreateDirectory(szPath);
+	return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3619,7 +3634,7 @@ bool CCryPak::MakeDir(const char* szPath, bool bGamePathMapping)
 ICryArchive* CCryPak::OpenArchive(
   const char* szPath, unsigned int nFlags, IMemoryBlock* pData)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(szPath);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, szPath);
 	PROFILE_DISK_OPEN;
 	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "CryPak (%s)", szPath);
 
@@ -3844,7 +3859,7 @@ uint32 CCryPak::ComputeCRC(const char* szPath, uint32 nFileOpenFlags)
 		}
 
 		// rbx open flags, x is a hint to not cache whole file in memory.
-		FILE* fp = gEnv->pCryPak->FOpen(szPath, "rbx", nFileOpenFlags);
+		FILE* fp = gEnv->pCryPak->FOpen(szPath, "rb", nFileOpenFlags);
 
 		if (!fp)
 		{
@@ -3905,9 +3920,7 @@ bool CCryPak::ComputeMD5(const char* szPath, unsigned char* md5, uint32 nFileOpe
 			}
 		}
 
-		// rbx open flags, x is a hint to not cache whole file in memory.
-		FILE* fp = gEnv->pCryPak->FOpen(szPath, "rbx", nFileOpenFlags);
-
+		FILE* fp = gEnv->pCryPak->FOpen(szPath, "rb", nFileOpenFlags);
 		if (!fp)
 		{
 			delete[]pMem;
@@ -4593,7 +4606,7 @@ bool CCryPak::SetPackAccessible(bool bAccessible, const char* pName, unsigned nF
 
 void CCryPak::SetPacksAccessibleForLevel(const char* sLevelName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	IPlatformOS* pPlatform = gEnv->pSystem->GetPlatformOS();
 
 	AUTO_MODIFYLOCK(m_csZips);

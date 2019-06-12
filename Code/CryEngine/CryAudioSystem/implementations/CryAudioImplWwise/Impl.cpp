@@ -14,8 +14,8 @@
 #include "ParameterEnvironment.h"
 #include "ParameterState.h"
 #include "Listener.h"
+#include "ListenerInfo.h"
 #include "Object.h"
-#include "GlobalObject.h"
 #include "SoundBank.h"
 #include "State.h"
 #include "Switch.h"
@@ -41,14 +41,10 @@
 #include <AK/SoundEngine/Common/AkQueryParameters.h>
 #include <AK/SoundEngine/Common/AkCallback.h>
 
-#include <AK/Plugin/AllPluginsRegistrationHelpers.h>
-#include <AK/Plugin/AkConvolutionReverbFXFactory.h>
-
-#if defined(WWISE_USE_OCULUS)
-	#include <OculusSpatializer.h>
-	#include <CryCore/Platform/CryLibrary.h>
-	#define CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL "OculusSpatializerWwise.dll"
-#endif // WWISE_USE_OCULUS
+// PluginFactories that can't be loaded on runtime
+#include <AK/Plugin/AkMeterFXFactory.h>
+#include <AK/Plugin/AkVorbisDecoderFactory.h>
+#include <AK/Plugin/AkOpusDecoderFactory.h>
 
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 	#include <AK/Comm/AkCommunication.h> // Communication between Wwise and the game (excluded in release build)
@@ -138,9 +134,9 @@ static void ErrorMonitorCallback(
 
 	CryAutoLock<CryCriticalSection> const lock(CryAudio::Impl::Wwise::g_cs);
 	CryAudio::Impl::Wwise::CEventInstance const* const pEventInstance = stl::find_in_map(CryAudio::Impl::Wwise::g_playingIds, in_playingID, nullptr);
-	CryAudio::Impl::Wwise::CBaseObject const* const pBaseObject = stl::find_in_map(CryAudio::Impl::Wwise::g_gameObjectIds, in_gameObjID, nullptr);
+	CryAudio::Impl::Wwise::CObject const* const pObject = stl::find_in_map(CryAudio::Impl::Wwise::g_gameObjectIds, in_gameObjID, nullptr);
 	char const* const szEventName = (pEventInstance != nullptr) ? pEventInstance->GetEvent().GetName() : "Unknown PlayingID";
-	char const* const szObjectName = (pBaseObject != nullptr) ? pBaseObject->GetName() : "Unknown GameObjID";
+	char const* const szObjectName = (pObject != nullptr) ? pObject->GetName() : "Unknown GameObjID";
 	Cry::Audio::Log(
 		((in_eErrorLevel& AK::Monitor::ErrorLevel_Error) != 0) ? CryAudio::ELogType::Error : CryAudio::ELogType::Comment,
 		"<Wwise> %s | ErrorCode: %d | PlayingID: %u (%s) | GameObjID: %" PRISIZE_T " (%s)", szTemp, in_eErrorCode, in_playingID, szEventName, in_gameObjID, szObjectName);
@@ -164,6 +160,7 @@ SPoolSizes g_debugPoolSizes;
 EventInstances g_constructedEventInstances;
 uint16 g_objectPoolSize = 0;
 uint16 g_eventInstancePoolSize = 0;
+std::vector<CListener*> g_constructedListeners;
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
 //////////////////////////////////////////////////////////////////////////
@@ -699,64 +696,6 @@ ERequestStatus CImpl::Init(uint16 const objectPoolSize)
 	}
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
-#if defined(WWISE_USE_OCULUS)
-	m_pOculusSpatializerLibrary = CryLoadLibrary(CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL);
-
-	if (m_pOculusSpatializerLibrary != nullptr)
-	{
-		typedef bool (__stdcall * AkGetSoundEngineCallbacksType)
-		  (unsigned short in_usCompanyID,
-		  unsigned short in_usPluginID,
-		  AkCreatePluginCallback& out_funcEffect,
-		  AkCreateParamCallback& out_funcParam);
-
-		AkGetSoundEngineCallbacksType AkGetSoundEngineCallbacks =
-			(AkGetSoundEngineCallbacksType)CryGetProcAddress(m_pOculusSpatializerLibrary, "AkGetSoundEngineCallbacks");
-
-		if (AkGetSoundEngineCallbacks != nullptr)
-		{
-			AkCreatePluginCallback CreateOculusFX;
-			AkCreateParamCallback CreateOculusFXParams;
-
-			// Register plugin effect
-			if (AkGetSoundEngineCallbacks(AKEFFECTID_OCULUS, AKEFFECTID_OCULUS_SPATIALIZER, CreateOculusFX, CreateOculusFXParams))
-			{
-				AK::SoundEngine::RegisterPlugin(AkPluginTypeMixer, AKEFFECTID_OCULUS, AKEFFECTID_OCULUS_SPATIALIZER, CreateOculusFX, CreateOculusFXParams);
-			}
-	#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-			else
-			{
-				Cry::Audio::Log(ELogType::Error, "Failed call to AkGetSoundEngineCallbacks in " CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL);
-			}
-	#endif    // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
-
-			// Register plugin attachment (for data attachment on individual sounds, like frequency hints etc.)
-			if (AkGetSoundEngineCallbacks(AKEFFECTID_OCULUS, AKEFFECTID_OCULUS_SPATIALIZER_ATTACHMENT, CreateOculusFX, CreateOculusFXParams))
-			{
-				AK::SoundEngine::RegisterPlugin(AkPluginTypeEffect, AKEFFECTID_OCULUS, AKEFFECTID_OCULUS_SPATIALIZER_ATTACHMENT, nullptr, CreateOculusFXParams);
-			}
-	#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-			else
-			{
-				Cry::Audio::Log(ELogType::Error, "Failed call to AkGetSoundEngineCallbacks in " CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL);
-			}
-	#endif    // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
-		}
-	#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-		else
-		{
-			Cry::Audio::Log(ELogType::Error, "Failed to load functions AkGetSoundEngineCallbacks in " CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL);
-		}
-	#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
-	}
-	#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-	else
-	{
-		Cry::Audio::Log(ELogType::Error, "Failed to load " CRY_AUDIO_IMPL_WWISE_OCULUS_SPATIALIZER_DLL);
-	}
-	#endif // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
-#endif   // WWISE_USE_OCULUS
-
 	REINST("Register Global Callback")
 
 	// AK::SoundEngine::RegisterGlobalCallback(GlobalCallback);
@@ -1126,33 +1065,7 @@ void CImpl::GetInfo(SImplInfo& implInfo) const
 }
 
 ///////////////////////////////////////////////////////////////////////////
-IObject* CImpl::ConstructGlobalObject()
-{
-	g_globalObjectId = m_gameObjectId++;
-
-#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-	char const* const szName = "GlobalObject";
-	AK::SoundEngine::RegisterGameObj(g_globalObjectId, szName);
-
-	MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CGlobalObject");
-	g_pObject = new CGlobalObject(g_globalObjectId, szName);
-
-	{
-		CryAutoLock<CryCriticalSection> const lock(CryAudio::Impl::Wwise::g_cs);
-		g_gameObjectIds[g_globalObjectId] = g_pObject;
-	}
-#else
-	AK::SoundEngine::RegisterGameObj(g_globalObjectId);
-
-	MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CGlobalObject");
-	g_pObject = new CGlobalObject(g_globalObjectId);
-#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
-
-	return static_cast<IObject*>(g_pObject);
-}
-
-///////////////////////////////////////////////////////////////////////////
-IObject* CImpl::ConstructObject(CTransformation const& transformation, char const* const szName /*= nullptr*/)
+IObject* CImpl::ConstructObject(CTransformation const& transformation, IListeners const& listeners, char const* const szName /*= nullptr*/)
 {
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 	AK::SoundEngine::RegisterGameObj(m_gameObjectId, szName);
@@ -1160,8 +1073,16 @@ IObject* CImpl::ConstructObject(CTransformation const& transformation, char cons
 	AK::SoundEngine::RegisterGameObj(m_gameObjectId);
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
+	ListenerInfos listenerInfos;
+	int const numListeners = listeners.size();
+
+	for (int i = 0; i < numListeners; ++i)
+	{
+		listenerInfos.emplace_back(static_cast<CListener*>(listeners[i]), 0.0f);
+	}
+
 	MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CObject");
-	auto const pObject = new CObject(m_gameObjectId++, transformation, szName);
+	auto const pObject = new CObject(m_gameObjectId++, transformation, listenerInfos, szName);
 
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 	{
@@ -1176,27 +1097,22 @@ IObject* CImpl::ConstructObject(CTransformation const& transformation, char cons
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructObject(IObject const* const pIObject)
 {
-	auto const pBaseObject = static_cast<CBaseObject const*>(pIObject);
-	AkGameObjectID const objectID = pBaseObject->GetId();
+	auto const pObject = static_cast<CObject const*>(pIObject);
+	AkGameObjectID const objectID = pObject->GetId();
 	AK::SoundEngine::UnregisterGameObj(objectID);
 
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 	{
 		CryAutoLock<CryCriticalSection> const lock(CryAudio::Impl::Wwise::g_cs);
-		g_gameObjectIds.erase(pBaseObject->GetId());
+		g_gameObjectIds.erase(pObject->GetId());
 	}
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
-	delete pBaseObject;
-
-	if (objectID == g_globalObjectId)
-	{
-		g_pObject = nullptr;
-	}
+	delete pObject;
 }
 
 ///////////////////////////////////////////////////////////////////////////
-IListener* CImpl::ConstructListener(CTransformation const& transformation, char const* const szName /*= nullptr*/)
+IListener* CImpl::ConstructListener(CTransformation const& transformation, char const* const szName)
 {
 	IListener* pIListener = nullptr;
 
@@ -1204,14 +1120,14 @@ IListener* CImpl::ConstructListener(CTransformation const& transformation, char 
 	AK::SoundEngine::SetDefaultListeners(&m_gameObjectId, 1);
 
 	MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CListener");
-	g_pListener = new CListener(transformation, m_gameObjectId);
+	auto const pListener = new CListener(transformation, m_gameObjectId++);
 
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
-	g_pListener->SetName(szName);
+	pListener->SetName(szName);
+	g_constructedListeners.push_back(pListener);
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
-	pIListener = static_cast<IListener*>(g_pListener);
-	g_listenerId = m_gameObjectId++;
+	pIListener = static_cast<IListener*>(pListener);
 
 	return pIListener;
 }
@@ -1219,12 +1135,29 @@ IListener* CImpl::ConstructListener(CTransformation const& transformation, char 
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructListener(IListener* const pIListener)
 {
-	CRY_ASSERT_MESSAGE(pIListener == g_pListener, "pIListener is not g_pListener during %s", __FUNCTION__);
+	auto const pListener = static_cast<CListener*>(pIListener);
+	AK::SoundEngine::UnregisterGameObj(pListener->GetId());
 
-	AK::SoundEngine::UnregisterGameObj(g_pListener->GetId());
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
+	auto iter(g_constructedListeners.begin());
+	auto const iterEnd(g_constructedListeners.cend());
 
-	delete g_pListener;
-	g_pListener = nullptr;
+	for (; iter != iterEnd; ++iter)
+	{
+		if ((*iter) == pListener)
+		{
+			if (iter != (iterEnd - 1))
+			{
+				(*iter) = g_constructedListeners.back();
+			}
+
+			g_constructedListeners.pop_back();
+			break;
+		}
+	}
+#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
+
+	delete pListener;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1233,7 +1166,7 @@ void CImpl::GamepadConnected(DeviceId const deviceUniqueID)
 	CRY_ASSERT(m_mapInputDevices.find(deviceUniqueID) == m_mapInputDevices.end()); // Mustn't exist yet!
 	AkOutputSettings settings("Wwise_Motion", static_cast<AkUniqueID>(deviceUniqueID));
 	AkOutputDeviceID deviceID = AK_INVALID_OUTPUT_DEVICE_ID;
-	AKRESULT const wwiseResult = AK::SoundEngine::AddOutput(settings, &deviceID, &g_listenerId, 1);
+	AKRESULT const wwiseResult = AK::SoundEngine::AddOutput(settings, &deviceID);
 
 	if (CRY_AUDIO_IMPL_WWISE_IS_OK(wwiseResult))
 	{
@@ -1330,10 +1263,10 @@ ITriggerConnection* CImpl::ConstructTriggerConnection(ITriggerInfo const* const 
 }
 
 ///////////////////////////////////////////////////////////////////////////
-void CImpl::DestructTriggerConnection(ITriggerConnection const* const pITriggerConnection)
+void CImpl::DestructTriggerConnection(ITriggerConnection* const pITriggerConnection)
 {
-	auto const pEvent = static_cast<CEvent const*>(pITriggerConnection);
-	pEvent->SetToBeDestructed();
+	auto const pEvent = static_cast<CEvent*>(pITriggerConnection);
+	pEvent->SetFlag(EEventFlags::ToBeDestructed);
 
 	if (pEvent->CanBeDestructed())
 	{
@@ -1680,12 +1613,12 @@ void CImpl::SetLanguage(char const* const szLanguage)
 
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 //////////////////////////////////////////////////////////////////////////
-CEventInstance* CImpl::ConstructEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event, CBaseObject const& baseObject)
+CEventInstance* CImpl::ConstructEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event, CObject const& object)
 {
 	event.IncrementNumInstances();
 	MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CEventInstance");
 
-	auto const pEventInstance = new CEventInstance(triggerInstanceId, event, baseObject);
+	auto const pEventInstance = new CEventInstance(triggerInstanceId, event, object);
 	g_constructedEventInstances.push_back(pEventInstance);
 
 	return pEventInstance;
@@ -1905,25 +1838,29 @@ void CImpl::DrawDebugMemoryInfo(IRenderAuxGeom& auxGeom, float const posX, float
 	                    m_name.c_str(), memAllocSizeString.c_str(), totalPoolSizeString.c_str(), initBankSizeString.c_str(), totalMemSizeString.c_str());
 
 	size_t const numEvents = g_constructedEventInstances.size();
+	size_t const numListeners = g_constructedListeners.size();
 
 	posY += Debug::g_systemLineHeight;
-	auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorTextSecondary, false, "Active Events: %3" PRISIZE_T " | Objects with relative velocity calculation: %u",
-	                    numEvents, g_numObjectsWithRelativeVelocity);
+	auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorTextSecondary, false, "Active Events: %3" PRISIZE_T " | Listeners: %3" PRISIZE_T " | Objects with relative velocity calculation: %u",
+	                    numEvents, numListeners, g_numObjectsWithRelativeVelocity);
 
-	Vec3 const& listenerPosition = g_pListener->GetPosition();
-	Vec3 const& listenerDirection = g_pListener->GetTransformation().GetForward();
-	float const listenerVelocity = g_pListener->GetVelocity().GetLength();
-	char const* const szName = g_pListener->GetName();
+	for (auto const pListener : g_constructedListeners)
+	{
+		Vec3 const& listenerPosition = pListener->GetPosition();
+		Vec3 const& listenerDirection = pListener->GetTransformation().GetForward();
+		float const listenerVelocity = pListener->GetVelocity().GetLength();
+		char const* const szName = pListener->GetName();
 
-	posY += Debug::g_systemLineHeight;
-	auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorListenerActive, false, "Listener: %s | PosXYZ: %.2f %.2f %.2f | FwdXYZ: %.2f %.2f %.2f | Velocity: %.2f m/s",
-	                    szName, listenerPosition.x, listenerPosition.y, listenerPosition.z, listenerDirection.x, listenerDirection.y, listenerDirection.z, listenerVelocity);
+		posY += Debug::g_systemLineHeight;
+		auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorListenerActive, false, "Listener: %s | PosXYZ: %.2f %.2f %.2f | FwdXYZ: %.2f %.2f %.2f | Velocity: %.2f m/s",
+		                    szName, listenerPosition.x, listenerPosition.y, listenerPosition.z, listenerDirection.x, listenerDirection.y, listenerDirection.z, listenerVelocity);
+	}
 
 #endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, float const debugDistance, char const* const szTextFilter) const
+void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, Vec3 const& camPos, float const debugDistance, char const* const szTextFilter) const
 {
 #if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 	if ((g_cvars.m_debugListFilter & g_debugListMask) != 0)
@@ -1941,7 +1878,7 @@ void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, 
 			for (auto const pEventInstance : g_constructedEventInstances)
 			{
 				Vec3 const& position = pEventInstance->GetObject().GetTransformation().GetPosition();
-				float const distance = position.GetDistance(g_pListener->GetPosition());
+				float const distance = position.GetDistance(camPos);
 
 				if ((debugDistance <= 0.0f) || ((debugDistance > 0.0f) && (distance < debugDistance)))
 				{
@@ -1953,7 +1890,8 @@ void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, 
 					if (draw)
 					{
 						ColorF const& color = (pEventInstance->GetState() == EEventInstanceState::Virtual) ? Debug::s_globalColorVirtual : Debug::s_listColorItemActive;
-						auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize, color, false, "%s on %s", szEventName, pEventInstance->GetObject().GetName());
+						auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize, color, false, "%s on %s (%s)",
+						                    szEventName, pEventInstance->GetObject().GetName(), pEventInstance->GetObject().GetListenerNames());
 
 						posY += Debug::g_listLineHeight;
 					}

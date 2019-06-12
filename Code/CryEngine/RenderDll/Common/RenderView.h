@@ -8,8 +8,6 @@
 #include "RenderOutput.h"
 #include "RenderPipeline.h"
 
-#include <CryThreading/CryThreadSafeRendererContainer.h>
-#include <CryThreading/CryThreadSafeWorkerContainer.h>
 #include <CryThreading/IJobManager.h>
 #include <CryMath/Range.h>
 
@@ -113,11 +111,9 @@ public:
 	};
 	using STransparentSegments = std::vector<STransparentSegment>;
 
-	//typedef CThreadSafeWorkerContainer<SRendItem> RenderItems;
 	typedef lockfree_add_vector<SRendItem>       RenderItems;
 	typedef std::vector<SShadowFrustumToRender>  ShadowFrustums;
 	typedef std::vector<SShadowFrustumToRender*> ShadowFrustumsPtr;
-	typedef lockfree_add_vector<CRenderObject*>  ModifiedObjects;
 
 	static const int32 MaxFogVolumeNum = 64;
 
@@ -146,6 +142,7 @@ public:
 
 	virtual void       SetCameras(const CCamera* pCameras, int cameraCount) final;
 	virtual void       SetPreviousFrameCameras(const CCamera* pCameras, int cameraCount) final;
+
 
 	// Begin/End writing items to the view from 3d engine traversal.
 	virtual void                 SwitchUsageMode(EUsageMode mode) override;
@@ -179,7 +176,7 @@ public:
 	virtual void                                      SetViewport(const SRenderViewport& viewport) final;
 	virtual const SRenderViewport&                    GetViewport() const final;
 
-	virtual void                                      SetGraphicsPipeline(std::shared_ptr<CGraphicsPipeline> pipeline) final { m_pGraphicsPipeline = pipeline; }
+	virtual void                                      SetGraphicsPipeline(std::shared_ptr<CGraphicsPipeline> pipeline) final;
 	virtual const std::shared_ptr<CGraphicsPipeline>& GetGraphicsPipeline() const final                                      { return m_pGraphicsPipeline; }
 
 	//! Get resolution of the render target surface(s)
@@ -295,6 +292,8 @@ public:
 
 	bool                  HasSunLight() { return GetSunLight() != nullptr; }
 	const SRenderLight*   GetSunLight() const;
+	const Vec4            GetSunLightColor();
+	const Vec3            GetSunLightDirection();
 	//////////////////////////////////////////////////////////////////////////
 
 	virtual const SRendererData& GetRendererData() const override { return m_rendererData; }
@@ -363,6 +362,7 @@ public:
 	void                   CalculateViewInfo();
 
 	void                   StartOptimizeTransparentRenderItemsResolvesJob();
+	void                   OptimizeTransparentRenderItemsResolvesJob();
 	void                   WaitForOptimizeTransparentRenderItemsResolvesJob() const;
 	bool                   HasResolveForList(ERenderListID list) const
 	{
@@ -426,15 +426,7 @@ private:
 	STransparentSegments m_transparentSegments[3];
 	mutable CryJobState  m_optimizeTransparentRenderItemsResolvesJobStatus;
 
-	// Temporary render objects storage
-	struct STempObjects
-	{
-		CThreadSafeWorkerContainer<CRenderObject*> tempObjects;
-		CRenderObject*                             pRenderObjectsPool = nullptr;
-		uint32 numObjectsInPool = 0;
-		CryCriticalSection                         accessLock;
-	};
-	STempObjects m_tempRenderObjects;
+	CryMT::CThreadSafePushContainer<CRenderObject> m_tempRenderObjects;
 
 	// Light sources affecting the view.
 	RenderLightsList m_lights[eDLT_NumLightTypes];
@@ -449,7 +441,8 @@ private:
 	//////////////////////////////////////////////////////////////////////////
 	// Fog Volumes
 	std::vector<SFogVolumeInfo> m_fogVolumes[IFogVolumeRenderNode::eFogVolumeType_Count];
-	lockfree_add_vector<ColorF> m_fogVolumeContributions;
+	CryMT::CThreadSafePushContainer<ColorF> m_fogVolumeContributions;
+	volatile int m_numFogVolumes;
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
@@ -508,7 +501,7 @@ private:
 		CPermanentRenderObject*   pObject;
 		EObjectCompilationOptions compilationFlags;
 	};
-	lockfree_add_vector<SPermanentRenderObjectCompilationData> m_permanentRenderObjectsToCompile;
+	CryMT::CThreadSafePushContainer<SPermanentRenderObjectCompilationData> m_permanentRenderObjectsToCompile;
 
 	// Temporary compiled objects for this frame
 	struct STemporaryRenderObjectCompilationData
@@ -518,10 +511,10 @@ private:
 		ERenderObjectFlags     objFlags;
 		ERenderElementFlags    elmFlags;
 	};
-	lockfree_add_vector<STemporaryRenderObjectCompilationData> m_temporaryCompiledObjects;
+	CryMT::CThreadSafePushContainer<STemporaryRenderObjectCompilationData> m_temporaryCompiledObjects;
 
 	// shader items that need to be updated
-	lockfree_add_vector<std::pair<CShaderResources*, CShader*>> m_shaderItemsToUpdate;
+	CryMT::CThreadSafePushContainer<std::pair<CShaderResources*, CShader*>> m_shaderItemsToUpdate;
 
 	// Persistent objects added to the view.
 	struct SPermanentObjectRecord
@@ -531,7 +524,7 @@ private:
 		int                     shadowFrustumSide;
 		bool                    requiresInstanceDataUpdate;
 	};
-	lockfree_add_vector<SPermanentObjectRecord> m_permanentObjects;
+	CryMT::CThreadSafePushContainer<SPermanentObjectRecord> m_permanentObjects;
 
 	//////////////////////////////////////////////////////////////////////////
 	CCamera::EEye m_currentEye = CCamera::eEye_Left;
@@ -541,6 +534,8 @@ private:
 	CCamera         m_previousCamera[CCamera::eEye_eCount];   // Previous frame render camera
 
 	SRenderViewInfo m_viewInfo[CCamera::eEye_eCount];         // Calculated View Information
+															  // Index 0 belongs to the current eye, other eye come after that.
+
 	size_t          m_viewInfoCount;                          // Number of current m_viewInfo structures.
 
 	// Internal job states to control when view job processing is done.
@@ -573,7 +568,7 @@ private:
 		std::array<ShadowFrustumsPtr, eShadowFrustumRenderType_Count> m_frustumsByType;
 		TiledShadingFrustumListByMaskSlice                            m_frustumsPerTiledShadingSlice;
 
-		CThreadSafeRendererContainer<AABB>                            m_nearestCasterBoxes;
+		CryMT::CThreadSafePushContainer<AABB>                         m_nearestCasterBoxes;
 
 		void Clear();
 		void AddNearestCaster(CRenderObject* pObj, const SRenderingPassInfo& passInfo);

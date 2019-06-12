@@ -53,8 +53,8 @@ bool CCullThread::LoadLevel(const char* pFolderName)
 {
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Occluder Mesh");
 	m_OCMBuffer.resize(0);
-	//FILE* pFile	=	gEnv->pCryPak->FOpen("Canyon25.ocm","rbx");
-	FILE* pFile = gEnv->pCryPak->FOpen((string(pFolderName) + "/occluder.ocm").c_str(), "rbx");
+	//FILE* pFile	=	gEnv->pCryPak->FOpen("Canyon25.ocm","rb");
+	FILE* pFile = gEnv->pCryPak->FOpen((string(pFolderName) + "/occluder.ocm").c_str(), "rb");
 	if (!pFile)
 	{
 		//__debugbreak();
@@ -543,7 +543,7 @@ void CCullThread::PrepareOcclusion()
 
 		if ((bHWZBuffer & 3) > 0)
 		{
-			CRY_PROFILE_REGION(PROFILE_3DENGINE, "Transfer Previous Frame Z-Buffer");
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Transfer Previous Frame Z-Buffer");
 			m_Enabled = RASTERIZER.DownLoadHWDepthBuffer(m_NearPlane, m_FarPlane, m_NearestMax, GetCVars()->e_CoverageBufferBias);
 		}
 		else
@@ -649,7 +649,7 @@ void CCullThread::PrepareOcclusion_RasterizeZBuffer()
 
 		if (bHWZBuffer & 4)
 		{
-			CRY_PROFILE_REGION(PROFILE_3DENGINE, "Rasterize Z-Buffer");
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Rasterize Z-Buffer");
 			m_Enabled = true;
 			RasterizeZBuffer((uint32)PolyLimit);
 		}

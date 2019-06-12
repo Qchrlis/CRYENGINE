@@ -25,9 +25,9 @@ struct ISwitchStateConnection;
 struct ITriggerConnection;
 } // namespace Impl
 
+class CListener;
 class CSystem;
 class CObject;
-class CGlobalObject;
 class CLoseFocusTrigger;
 class CGetFocusTrigger;
 class CMuteAllTrigger;
@@ -40,6 +40,7 @@ class CSwitch;
 class CPreloadRequest;
 class CEnvironment;
 class CSetting;
+class CTriggerInstance;
 
 enum class ESystemStates : EnumFlagsType
 {
@@ -59,30 +60,34 @@ using SwitchLookup = std::map<ControlId, CSwitch const*>;
 using PreloadRequestLookup = std::map<PreloadRequestId, CPreloadRequest*>;
 using EnvironmentLookup = std::map<EnvironmentId, CEnvironment const*>;
 using SettingLookup = std::map<ControlId, CSetting const*>;
+using TriggerInstances = std::map<TriggerInstanceId, CTriggerInstance*>;
 using TriggerInstanceIdLookup = std::map<TriggerInstanceId, CObject*>;
-using TriggerInstanceIdLookupGlobal = std::map<TriggerInstanceId, CGlobalObject*>;
 using ContextLookup = std::map<ContextId, CryFixedStringT<MaxFileNameLength>>;
 
+using TriggerInstanceIds = std::vector<TriggerInstanceId>;
 using TriggerConnections = std::vector<Impl::ITriggerConnection*>;
 using ParameterConnections = std::vector<Impl::IParameterConnection*>;
 using SwitchStateConnections = std::vector<Impl::ISwitchStateConnection*>;
 using EnvironmentConnections = std::vector<Impl::IEnvironmentConnection*>;
 using SettingConnections = std::vector<Impl::ISettingConnection*>;
 using Objects = std::vector<CObject*>;
+using Listeners = std::vector<CListener*>;
 
 extern Impl::IImpl* g_pIImpl;
+extern CListener g_defaultListener;
+extern Impl::IObject* g_pIObject;
 extern CSystem g_system;
 extern ESystemStates g_systemStates;
-extern TriggerLookup g_triggers;
-extern ParameterLookup g_parameters;
-extern SwitchLookup g_switches;
+extern TriggerLookup g_triggerLookup;
+extern ParameterLookup g_parameterLookup;
+extern SwitchLookup g_switchLookup;
 extern PreloadRequestLookup g_preloadRequests;
-extern EnvironmentLookup g_environments;
-extern SettingLookup g_settings;
-extern TriggerInstanceIdLookup g_triggerInstanceIdToObject;
-extern TriggerInstanceIdLookupGlobal g_triggerInstanceIdToGlobalObject;
-extern ContextLookup g_registeredContexts;
-extern CGlobalObject g_object;
+extern EnvironmentLookup g_environmentLookup;
+extern SettingLookup g_settingLookup;
+extern TriggerInstances g_triggerInstances;
+extern TriggerInstanceIdLookup g_triggerInstanceIdLookup;
+extern ContextLookup g_contextLookup;
+extern TriggerInstanceIds g_triggerInstanceIds;
 extern CLoseFocusTrigger g_loseFocusTrigger;
 extern CGetFocusTrigger g_getFocusTrigger;
 extern CMuteAllTrigger g_muteAllTrigger;
@@ -125,19 +130,30 @@ static void IncrementTriggerInstanceIdCounter()
 }
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
+extern CListener g_previewListener;
 extern Objects g_constructedObjects;
+
+constexpr char const* g_szGlobalName = "Global";
+
+constexpr char const* g_szPreviewListenerName = "Preview Listener";
+constexpr ListenerId g_previewListenerId = StringToId("ThisIsTheHopefullyUniqueIdForThePreviewListener");
 
 constexpr char const* g_szPreviewTriggerName = "preview_trigger";
 constexpr ControlId g_previewTriggerId = StringToId(g_szPreviewTriggerName);
 
 class CPreviewTrigger;
 extern CPreviewTrigger g_previewTrigger;
-extern CGlobalObject g_previewObject;
+extern CObject g_previewObject;
 extern SPoolSizes g_debugPoolSizes;
 
 using SwitchStateIds = std::map<ControlId, SwitchStateId>;
 using ParameterValues = std::map<ControlId, float>;
 using EnvironmentValues = std::map<EnvironmentId, float>;
+
+extern ParameterValues g_parameters;
+extern ParameterValues g_parametersGlobally;
+extern SwitchStateIds g_switchStates;
+extern SwitchStateIds g_switchStatesGlobally;
 
 struct SContextInfo final
 {

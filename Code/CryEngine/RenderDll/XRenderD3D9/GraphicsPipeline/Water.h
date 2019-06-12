@@ -15,7 +15,7 @@ class CWaterStage : public CGraphicsPipelineStage
 public:
 	static const EGraphicsPipelineStage StageID = eStage_Water;
 
-	enum EPass
+	enum EPass : uint8
 	{
 		ePass_ReflectionGen = 0,
 		ePass_FogVolume,
@@ -23,9 +23,11 @@ public:
 		ePass_CausticsGen,
 		ePass_OceanMaskGen,
 
-		ePass_Count,
+		ePass_Count
 	};
-	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES, "Too many passes in one graphics pipeline stage");
+
+	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES,
+		"The pipeline-state array is unable to carry as much pass-permutation as defined here!");
 
 	enum EPassMask
 	{
@@ -131,7 +133,7 @@ public:
 private:
 	CDeviceResourceLayoutPtr CreateScenePassLayout(const CDeviceResourceSetDesc& perPassResources);
 	bool                     PrepareDefaultPerInstanceResources();
-	bool                     SetAndBuildPerPassResources(bool bOnInit, EPass passId);
+	bool                     UpdatePerPassResources(bool bOnInit, EPass passId);
 	void                     UpdatePerPassResources(EPass passId);
 	void                     PrepareVolumeCausticsRenderTargets(bool hasCaustics, int renderWidth, int renderHeight);
 

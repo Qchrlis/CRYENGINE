@@ -17,7 +17,6 @@
 #include "File.h"
 #include "Listener.h"
 #include "Object.h"
-#include "GlobalObject.h"
 #include "LoseFocusTrigger.h"
 #include "GetFocusTrigger.h"
 #include "MuteAllTrigger.h"
@@ -36,6 +35,7 @@
 #include <CrySystem/ITimer.h>
 #include <CryString/CryPath.h>
 #include <CryEntitySystem/IEntitySystem.h>
+#include <CryMath/Cry_Camera.h>
 
 #if defined(CRY_AUDIO_USE_OCCLUSION)
 	#include "PropagationProcessor.h"
@@ -120,6 +120,7 @@ struct SRequestCount final
 
 SRequestCount g_requestsPerUpdate;
 SRequestCount g_requestPeaks;
+Debug::StateDrawInfo g_stateDrawInfo;
 
 //////////////////////////////////////////////////////////////////////////
 void CountRequestPerUpdate(CRequest const& request)
@@ -345,7 +346,206 @@ void SetRequestCountPeak()
 
 	ZeroStruct(g_requestsPerUpdate);
 }
+
+//////////////////////////////////////////////////////////////////////////
+bool ExecuteDefaultTrigger(ControlId const id)
+{
+	bool wasSuccess = true;
+
+	switch (id)
+	{
+	case g_loseFocusTriggerId:
+		{
+			g_loseFocusTrigger.Execute();
+			break;
+		}
+	case g_getFocusTriggerId:
+		{
+			g_getFocusTrigger.Execute();
+			break;
+		}
+	case g_muteAllTriggerId:
+		{
+			g_muteAllTrigger.Execute();
+			break;
+		}
+	case g_unmuteAllTriggerId:
+		{
+			g_unmuteAllTrigger.Execute();
+			break;
+		}
+	case g_pauseAllTriggerId:
+		{
+			g_pauseAllTrigger.Execute();
+			break;
+		}
+	case g_resumeAllTriggerId:
+		{
+			g_resumeAllTrigger.Execute();
+			break;
+		}
+	default:
+		{
+			wasSuccess = false;
+			break;
+		}
+	}
+
+	return wasSuccess;
+}
+
+///////////////////////////////////////////////////////////////////////////
+void ForceGlobalDataImplRefresh()
+{
+	// Parameters
+	for (auto const& parameterPair : g_parameters)
+	{
+		CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, parameterPair.first, nullptr);
+
+		if (pParameter != nullptr)
+		{
+			pParameter->Set(parameterPair.second);
+		}
+		else
+		{
+			Cry::Audio::Log(ELogType::Warning, "Parameter \"%u\" does not exist!", parameterPair.first);
+		}
+	}
+
+	for (auto const& parameterPair : g_parametersGlobally)
+	{
+		CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, parameterPair.first, nullptr);
+
+		if (pParameter != nullptr)
+		{
+			pParameter->SetGlobally(parameterPair.second);
+		}
+		else
+		{
+			Cry::Audio::Log(ELogType::Warning, "Parameter \"%u\" does not exist!", parameterPair.first);
+		}
+	}
+
+	// Switches
+	for (auto const& switchPair : g_switchStates)
+	{
+		CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, switchPair.first, nullptr);
+
+		if (pSwitch != nullptr)
+		{
+			CSwitchState const* const pState = stl::find_in_map(pSwitch->GetStates(), switchPair.second, nullptr);
+
+			if (pState != nullptr)
+			{
+				pState->Set();
+			}
+		}
+	}
+
+	for (auto const& switchPair : g_switchStatesGlobally)
+	{
+		CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, switchPair.first, nullptr);
+
+		if (pSwitch != nullptr)
+		{
+			CSwitchState const* const pState = stl::find_in_map(pSwitch->GetStates(), switchPair.second, nullptr);
+
+			if (pState != nullptr)
+			{
+				pState->SetGlobally();
+			}
+		}
+	}
+
+	uint16 triggerCounter = 0;
+	// Last re-execute its active triggers.
+	for (auto const& triggerInstancePair : g_triggerInstances)
+	{
+		CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, triggerInstancePair.second->GetTriggerId(), nullptr);
+
+		if (pTrigger != nullptr)
+		{
+			pTrigger->Execute(triggerInstancePair.first, triggerInstancePair.second, triggerCounter);
+			++triggerCounter;
+		}
+		else if (!ExecuteDefaultTrigger(triggerInstancePair.second->GetTriggerId()))
+		{
+			Cry::Audio::Log(ELogType::Warning, "Trigger \"%u\" does not exist!", triggerInstancePair.second->GetTriggerId());
+		}
+	}
+}
 #endif // CRY_AUDIO_USE_DEBUG_CODE
+
+//////////////////////////////////////////////////////////////////////////
+void ReleaseGlobalData()
+{
+	for (auto& triggerInstancePair : g_triggerInstances)
+	{
+		triggerInstancePair.second->Release();
+	}
+
+	g_pIObject = nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////
+void ReportStartedGlobalTriggerInstance(TriggerInstanceId const triggerInstanceId, ETriggerResult const result)
+{
+	TriggerInstances::iterator const iter(g_triggerInstances.find(triggerInstanceId));
+
+	if (iter != g_triggerInstances.end())
+	{
+		iter->second->SetPendingToPlaying();
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+void ReportFinishedGlobalTriggerInstance(TriggerInstanceId const triggerInstanceId, ETriggerResult const result)
+{
+	TriggerInstances::iterator const iter(g_triggerInstances.find(triggerInstanceId));
+
+	if (iter != g_triggerInstances.end())
+	{
+		CTriggerInstance* const pTriggerInstance = iter->second;
+
+		if (result != ETriggerResult::Pending)
+		{
+			if (pTriggerInstance->IsPlayingInstanceFinished())
+			{
+				g_triggerInstanceIds.erase(std::remove(g_triggerInstanceIds.begin(), g_triggerInstanceIds.end(), triggerInstanceId), g_triggerInstanceIds.end());
+				pTriggerInstance->SendFinishedRequest();
+
+				g_triggerInstances.erase(iter);
+				delete pTriggerInstance;
+			}
+		}
+		else
+		{
+			if (pTriggerInstance->IsPendingInstanceFinished())
+			{
+				g_triggerInstanceIds.erase(std::remove(g_triggerInstanceIds.begin(), g_triggerInstanceIds.end(), triggerInstanceId), g_triggerInstanceIds.end());
+				pTriggerInstance->SendFinishedRequest();
+
+				g_triggerInstances.erase(iter);
+				delete pTriggerInstance;
+			}
+		}
+	}
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	else
+	{
+		Cry::Audio::Log(ELogType::Warning, "Unknown trigger instance id %u during %s", triggerInstanceId, __FUNCTION__);
+	}
+#endif  // CRY_AUDIO_USE_DEBUG_CODE
+}
+
+///////////////////////////////////////////////////////////////////////////
+void UpdateGlobalData(float const deltaTime)
+{
+	if (!g_triggerInstances.empty())
+	{
+		g_pIObject->Update(deltaTime);
+	}
+}
 
 //////////////////////////////////////////////////////////////////////////
 void AllocateMemoryPools()
@@ -447,7 +647,7 @@ void UpdateActiveObjects(float const deltaTime)
 
 	if (deltaTime > 0.0f)
 	{
-		g_object.Update(deltaTime);
+		UpdateGlobalData(deltaTime);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 		g_previewObject.Update(deltaTime);
@@ -489,7 +689,7 @@ void UpdateActiveObjects(float const deltaTime)
 	}
 	else
 	{
-		g_object.Update(deltaTime);
+		UpdateGlobalData(deltaTime);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 		g_previewObject.Update(deltaTime);
@@ -497,7 +697,7 @@ void UpdateActiveObjects(float const deltaTime)
 
 		for (auto const pObject : g_activeObjects)
 		{
-			pObject->GetImplDataPtr()->Update(deltaTime);
+			pObject->GetImplData()->Update(deltaTime);
 		}
 	}
 }
@@ -532,7 +732,7 @@ void CSystem::RemoveRequestListener(void (*func)(SRequestInfo const* const), voi
 //////////////////////////////////////////////////////////////////////////
 void CSystem::ExternalUpdate()
 {
-	CRY_PROFILE_REGION(PROFILE_AUDIO, "Audio: External Update");
+	CRY_PROFILE_SECTION(PROFILE_AUDIO, "Audio: External Update");
 
 	CRY_ASSERT(gEnv->mMainThreadId == CryGetCurrentThreadId());
 	CRequest request;
@@ -545,7 +745,7 @@ void CSystem::ExternalUpdate()
 		{
 			auto const pBase = static_cast<SObjectRequestDataBase const*>(request.GetData());
 			pBase->pObject->DecrementSyncCallbackCounter();
-			// No sync callback counting for global object, because it gets released on unloading of the audio system dll.
+			// No sync callback counting for default object, because it gets released on unloading of the audio system dll.
 		}
 	}
 
@@ -795,7 +995,7 @@ bool CSystem::OnInputEvent(SInputEvent const& event)
 //////////////////////////////////////////////////////////////////////////
 void CSystem::InternalUpdate()
 {
-	CRY_PROFILE_REGION(PROFILE_AUDIO, "Audio: Internal Update");
+	CRY_PROFILE_SECTION(PROFILE_AUDIO, "Audio: Internal Update");
 
 	if (m_lastExternalThreadFrameId != m_externalThreadFrameId)
 	{
@@ -828,7 +1028,7 @@ void CSystem::InternalUpdate()
 	else
 	{
 		// If we're faster than the external thread let's wait to make room for other threads.
-		CRY_PROFILE_REGION_WAITING(PROFILE_AUDIO, "Wait - Audio Update");
+		CRY_PROFILE_SECTION_WAITING(PROFILE_AUDIO, "Wait - Audio Update");
 
 		// The external thread will wake the audio thread up effectively syncing it to itself.
 		// If not however, the audio thread will execute at a minimum of roughly 30 fps.
@@ -859,6 +1059,10 @@ bool CSystem::Initialize()
 		}
 
 		CObject::CreateAllocator(static_cast<uint16>(g_cvars.m_objectPoolSize));
+
+#if defined(CRY_AUDIO_USE_OCCLUSION)
+		SOcclusionInfo::CreateAllocator(static_cast<uint16>(g_cvars.m_objectPoolSize));
+#endif    // CRY_AUDIO_USE_OCCLUSION
 
 		if (g_cvars.m_triggerInstancePoolSize < 1)
 		{
@@ -895,6 +1099,7 @@ bool CSystem::Initialize()
 			std::forward_as_tuple(SContextInfo(GlobalContextId, true, true)));
 #endif // CRY_AUDIO_USE_DEBUG_CODE
 
+		g_listenerManager.Initialize();
 		g_fileCacheManager.Initialize();
 
 		CRY_ASSERT_MESSAGE(!m_mainThread.IsActive(), "AudioSystem thread active before initialization during %s", __FUNCTION__);
@@ -937,7 +1142,7 @@ void CSystem::Release()
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 		for (auto const pObject : g_constructedObjects)
 		{
-			CRY_ASSERT_MESSAGE(pObject->GetImplDataPtr() == nullptr, "An object cannot have valid impl data during %s", __FUNCTION__);
+			CRY_ASSERT_MESSAGE(pObject->GetImplData() == nullptr, "An object cannot have valid impl data during %s", __FUNCTION__);
 			delete pObject;
 		}
 
@@ -949,6 +1154,10 @@ void CSystem::Release()
 
 		CObject::FreeMemoryPool();
 		CTriggerInstance::FreeMemoryPool();
+
+#if defined(CRY_AUDIO_USE_OCCLUSION)
+		SOcclusionInfo::FreeMemoryPool();
+#endif    // CRY_AUDIO_USE_OCCLUSION
 
 		m_isInitialized = false;
 	}
@@ -1323,7 +1532,7 @@ char const* CSystem::GetConfigPath() const
 }
 
 ///////////////////////////////////////////////////////////////////////////
-CryAudio::IListener* CSystem::CreateListener(CTransformation const& transformation, char const* const szName /*= nullptr*/)
+CryAudio::IListener* CSystem::CreateListener(CTransformation const& transformation, char const* const szName)
 {
 	CListener* pListener = nullptr;
 	SSystemRequestData<ESystemRequestType::RegisterListener> const requestData(&pListener, transformation, szName);
@@ -1336,9 +1545,33 @@ CryAudio::IListener* CSystem::CreateListener(CTransformation const& transformati
 ///////////////////////////////////////////////////////////////////////////
 void CSystem::ReleaseListener(CryAudio::IListener* const pIListener)
 {
-	SSystemRequestData<ESystemRequestType::ReleaseListener> const requestData(static_cast<CListener*>(pIListener));
-	CRequest const request(&requestData);
-	PushRequest(request);
+	if (static_cast<CListener*>(pIListener)->IsUserCreated())
+	{
+		SSystemRequestData<ESystemRequestType::ReleaseListener> const requestData(static_cast<CListener*>(pIListener));
+		CRequest const request(&requestData);
+		PushRequest(request);
+	}
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	else
+	{
+		Cry::Audio::Log(ELogType::Error, "Non-user-created listener cannot get released during %s", __FUNCTION__);
+	}
+#endif  // CRY_AUDIO_USE_DEBUG_CODE
+}
+
+//////////////////////////////////////////////////////////////////////////
+IListener* CSystem::GetListener(ListenerId const id /*= DefaultListenerId*/)
+{
+	CListener* pListener = &g_defaultListener;
+
+	if ((id != DefaultListenerId) && (id != InvalidListenerId))
+	{
+		SSystemRequestData<ESystemRequestType::GetListener> const requestData(&pListener, id);
+		CRequest const request(&requestData, ERequestFlags::ExecuteBlocking);
+		PushRequest(request);
+	}
+
+	return static_cast<CryAudio::IListener*>(pListener);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1365,7 +1598,7 @@ void CSystem::ReleaseObject(CryAudio::IObject* const pIObject)
 void CSystem::GetTriggerData(ControlId const triggerId, STriggerData& triggerData)
 {
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
-	CTrigger const* const pTrigger = stl::find_in_map(g_triggers, triggerId, nullptr);
+	CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, triggerId, nullptr);
 
 	if (pTrigger != nullptr)
 	{
@@ -1389,18 +1622,16 @@ void CSystem::ReleaseImpl()
 	// Don't delete objects here as we need them to survive a middleware switch!
 	for (auto const pObject : g_constructedObjects)
 	{
-		g_pIImpl->DestructObject(pObject->GetImplDataPtr());
+		g_pIImpl->DestructObject(pObject->GetImplData());
 		pObject->Release();
 	}
 #endif // CRY_AUDIO_USE_DEBUG_CODE
 
-	g_pIImpl->DestructObject(g_object.GetImplDataPtr());
-	g_object.SetImplDataPtr(nullptr);
-	g_object.Release();
+	g_pIImpl->DestructObject(g_pIObject);
+	ReleaseGlobalData();
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
-	g_pIImpl->DestructObject(g_previewObject.GetImplDataPtr());
-	g_previewObject.SetImplDataPtr(nullptr);
+	g_pIImpl->DestructObject(g_previewObject.GetImplData());
 	g_previewObject.Release();
 	ResetRequestCount();
 #endif // CRY_AUDIO_USE_DEBUG_CODE
@@ -1433,7 +1664,7 @@ void CSystem::Log(ELogType const type, char const* const szFormat, ...)
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	if (szFormat != nullptr && szFormat[0] != '\0' && gEnv->pLog->GetVerbosityLevel() != -1)
 	{
-		CRY_PROFILE_REGION(PROFILE_AUDIO, "CSystem::Log");
+		CRY_PROFILE_SECTION(PROFILE_AUDIO, "CSystem::Log");
 
 		char buffer[256];
 		va_list ArgList;
@@ -1530,7 +1761,7 @@ void CSystem::ProcessRequests(Requests& requestQueue)
 					{
 						auto const pBase = static_cast<SObjectRequestDataBase const*>(request.GetData());
 						pBase->pObject->IncrementSyncCallbackCounter();
-						// No sync callback counting for global object, because it gets released on unloading of the audio system dll.
+						// No sync callback counting for default object, because it gets released on unloading of the audio system dll.
 					}
 
 					m_syncCallbacks.enqueue(request);
@@ -1630,11 +1861,11 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::ExecuteTrigger> const* const>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
-				pTrigger->Execute(g_object, request.pOwner, request.pUserData, request.pUserDataOwner, request.flags);
+				pTrigger->Execute(request.pOwner, request.pUserData, request.pUserDataOwner, request.flags);
 				result = ERequestStatus::Success;
 			}
 
@@ -1644,11 +1875,11 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::StopTrigger> const* const>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
-				pTrigger->Stop(g_object.GetImplDataPtr());
+				pTrigger->Stop(g_pIObject);
 				result = ERequestStatus::Success;
 			}
 
@@ -1656,7 +1887,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		}
 	case ESystemRequestType::StopAllTriggers:
 		{
-			g_object.StopAllTriggers();
+			g_pIObject->StopAllTriggers();
 			result = ERequestStatus::Success;
 
 			break;
@@ -1665,19 +1896,33 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::ExecuteTriggerEx> const*>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
+				Listeners listeners;
+
+				for (auto const id : pRequestData->listenerIds)
+				{
+					listeners.push_back(g_listenerManager.GetListener(id));
+				}
+
+				Impl::IListeners implListeners;
+
+				for (auto const pListener : listeners)
+				{
+					implListeners.push_back(pListener->GetImplData());
+				}
+
 				MEMSTAT_CONTEXT(EMemStatContextType::AudioSystem, "CryAudio::CObject");
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				auto const pNewObject = new CObject(pRequestData->transformation, pRequestData->name.c_str());
-				pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, pNewObject->GetName()));
+				pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, implListeners, pNewObject->GetName()), listeners);
 				g_constructedObjects.push_back(pNewObject);
 #else
 				auto const pNewObject = new CObject(pRequestData->transformation);
-				pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation));
+				pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, implListeners), listeners);
 #endif      // CRY_AUDIO_USE_DEBUG_CODE
 
 				if (pRequestData->setCurrentEnvironments)
@@ -1873,16 +2118,11 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::SetParameter> const*>(request.GetData());
 
-			CParameter const* const pParameter = stl::find_in_map(g_parameters, pRequestData->parameterId, nullptr);
+			CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, pRequestData->parameterId, nullptr);
 
 			if (pParameter != nullptr)
 			{
-#if defined(CRY_AUDIO_USE_DEBUG_CODE)
-				pParameter->Set(g_object, pRequestData->value);
-#else
-				pParameter->Set(g_object.GetImplDataPtr(), pRequestData->value);
-#endif    // CRY_AUDIO_USE_DEBUG_CODE
-
+				pParameter->Set(pRequestData->value);
 				result = ERequestStatus::Success;
 			}
 
@@ -1892,7 +2132,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::SetParameter> const*>(request.GetData());
 
-			CParameter const* const pParameter = stl::find_in_map(g_parameters, pRequestData->parameterId, nullptr);
+			CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, pRequestData->parameterId, nullptr);
 
 			if (pParameter != nullptr)
 			{
@@ -1906,7 +2146,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::SetSwitchState> const*>(request.GetData());
 
-			CSwitch const* const pSwitch = stl::find_in_map(g_switches, pRequestData->switchId, nullptr);
+			CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, pRequestData->switchId, nullptr);
 
 			if (pSwitch != nullptr)
 			{
@@ -1914,12 +2154,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 
 				if (pState != nullptr)
 				{
-#if defined(CRY_AUDIO_USE_DEBUG_CODE)
-					pState->Set(g_object);
-#else
-					pState->Set(g_object.GetImplDataPtr());
-#endif      // CRY_AUDIO_USE_DEBUG_CODE
-
+					pState->Set();
 					result = ERequestStatus::Success;
 				}
 			}
@@ -1930,7 +2165,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::SetSwitchState> const*>(request.GetData());
 
-			CSwitch const* const pSwitch = stl::find_in_map(g_switches, pRequestData->switchId, nullptr);
+			CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, pRequestData->switchId, nullptr);
 
 			if (pSwitch != nullptr)
 			{
@@ -1949,7 +2184,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::AutoLoadSetting> const*>(request.GetData());
 
-			for (auto const& settingPair : g_settings)
+			for (auto const& settingPair : g_settingLookup)
 			{
 				CSetting const* const pSetting = settingPair.second;
 
@@ -1968,7 +2203,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::LoadSetting> const*>(request.GetData());
 
-			CSetting const* const pSetting = stl::find_in_map(g_settings, pRequestData->id, nullptr);
+			CSetting const* const pSetting = stl::find_in_map(g_settingLookup, pRequestData->id, nullptr);
 
 			if (pSetting != nullptr)
 			{
@@ -1982,7 +2217,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::UnloadSetting> const*>(request.GetData());
 
-			CSetting const* const pSetting = stl::find_in_map(g_settings, pRequestData->id, nullptr);
+			CSetting const* const pSetting = stl::find_in_map(g_settingLookup, pRequestData->id, nullptr);
 
 			if (pSetting != nullptr)
 			{
@@ -2037,7 +2272,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 	case ESystemRequestType::RegisterListener:
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::RegisterListener> const*>(request.GetData());
-			*pRequestData->ppListener = g_listenerManager.CreateListener(pRequestData->transformation, pRequestData->name.c_str());
+			*pRequestData->ppListener = g_listenerManager.CreateListener(pRequestData->transformation, pRequestData->name.c_str(), true);
 			break;
 		}
 	case ESystemRequestType::ReleaseListener:
@@ -2054,19 +2289,40 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 
 			break;
 		}
+	case ESystemRequestType::GetListener:
+		{
+			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::GetListener> const*>(request.GetData());
+			*pRequestData->ppListener = g_listenerManager.GetListener(pRequestData->id);
+			break;
+		}
 	case ESystemRequestType::RegisterObject:
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::RegisterObject> const*>(request.GetData());
+
+			Listeners listeners;
+
+			for (auto const id : pRequestData->listenerIds)
+			{
+				listeners.push_back(g_listenerManager.GetListener(id));
+			}
+
+			Impl::IListeners implListeners;
+			implListeners.reserve(listeners.size());
+
+			for (auto const pListener : listeners)
+			{
+				implListeners.push_back(pListener->GetImplData());
+			}
 
 			MEMSTAT_CONTEXT(EMemStatContextType::AudioSystem, "CryAudio::CObject");
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 			auto const pNewObject = new CObject(pRequestData->transformation, pRequestData->name.c_str());
-			pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, pNewObject->GetName()));
+			pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, implListeners, pNewObject->GetName()), listeners);
 			g_constructedObjects.push_back(pNewObject);
 #else
 			auto const pNewObject = new CObject(pRequestData->transformation);
-			pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation));
+			pNewObject->Init(g_pIImpl->ConstructObject(pRequestData->transformation, implListeners), listeners);
 #endif    // CRY_AUDIO_USE_DEBUG_CODE
 
 			if (pRequestData->setCurrentEnvironments)
@@ -2116,7 +2372,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SSystemRequestData<ESystemRequestType::ExecutePreviewTrigger> const*>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
@@ -2173,7 +2429,7 @@ ERequestStatus CSystem::ProcessSystemRequest(CRequest const& request)
 				pObject->StopAllTriggers();
 			}
 
-			g_object.StopAllTriggers();
+			g_pIObject->StopAllTriggers();
 			g_previewObject.StopAllTriggers();
 
 			// Store active contexts for reloading after they have been unloaded which empties the map.
@@ -2255,7 +2511,7 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 			bool objectFound = false;
 #endif  // CRY_AUDIO_USE_DEBUG_CODE
 
-			CObject* const pObject = stl::find_in_map(g_triggerInstanceIdToObject, pRequestData->triggerInstanceId, nullptr);
+			CObject* const pObject = stl::find_in_map(g_triggerInstanceIdLookup, pRequestData->triggerInstanceId, nullptr);
 
 			if (pObject != nullptr)
 			{
@@ -2265,18 +2521,13 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 				objectFound = true;
 #endif    // CRY_AUDIO_USE_DEBUG_CODE
 			}
-			else
+			else if (std::find(g_triggerInstanceIds.begin(), g_triggerInstanceIds.end(), pRequestData->triggerInstanceId) != g_triggerInstanceIds.end())
 			{
-				CGlobalObject* const pGlobalObject = stl::find_in_map(g_triggerInstanceIdToGlobalObject, pRequestData->triggerInstanceId, nullptr);
-
-				if (pGlobalObject != nullptr)
-				{
-					pGlobalObject->ReportStartedTriggerInstance(pRequestData->triggerInstanceId, pRequestData->result);
+				ReportStartedGlobalTriggerInstance(pRequestData->triggerInstanceId, pRequestData->result);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
-					objectFound = true;
+				objectFound = true;
 #endif      // CRY_AUDIO_USE_DEBUG_CODE
-				}
 			}
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
@@ -2295,7 +2546,7 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 			bool objectFound = false;
 #endif  // CRY_AUDIO_USE_DEBUG_CODE
 
-			CObject* const pObject = stl::find_in_map(g_triggerInstanceIdToObject, pRequestData->triggerInstanceId, nullptr);
+			CObject* const pObject = stl::find_in_map(g_triggerInstanceIdLookup, pRequestData->triggerInstanceId, nullptr);
 
 			if (pObject != nullptr)
 			{
@@ -2306,18 +2557,13 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 #endif    // CRY_AUDIO_USE_DEBUG_CODE
 
 			}
-			else
+			else if (std::find(g_triggerInstanceIds.begin(), g_triggerInstanceIds.end(), pRequestData->triggerInstanceId) != g_triggerInstanceIds.end())
 			{
-				CGlobalObject* const pGlobalObject = stl::find_in_map(g_triggerInstanceIdToGlobalObject, pRequestData->triggerInstanceId, nullptr);
-
-				if (pGlobalObject != nullptr)
-				{
-					pGlobalObject->ReportFinishedTriggerInstance(pRequestData->triggerInstanceId, pRequestData->result);
+				ReportFinishedGlobalTriggerInstance(pRequestData->triggerInstanceId, pRequestData->result);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
-					objectFound = true;
+				objectFound = true;
 #endif      // CRY_AUDIO_USE_DEBUG_CODE
-				}
 			}
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
@@ -2334,7 +2580,7 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 
 			for (auto const pObject : g_activeObjects)
 			{
-				if (pObject->GetImplDataPtr() == pRequestData->pIObject)
+				if (pObject->GetImplData() == pRequestData->pIObject)
 				{
 					pObject->RemoveFlag(EObjectFlags::Virtual);
 
@@ -2356,7 +2602,7 @@ ERequestStatus CSystem::ProcessCallbackRequest(CRequest& request)
 
 			for (auto const pObject : g_activeObjects)
 			{
-				if (pObject->GetImplDataPtr() == pRequestData->pIObject)
+				if (pObject->GetImplData() == pRequestData->pIObject)
 				{
 					pObject->SetFlag(EObjectFlags::Virtual);
 					break;
@@ -2403,7 +2649,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::ExecuteTrigger> const*>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
@@ -2417,11 +2663,11 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::StopTrigger> const*>(request.GetData());
 
-			CTrigger const* const pTrigger = stl::find_in_map(g_triggers, pRequestData->triggerId, nullptr);
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, pRequestData->triggerId, nullptr);
 
 			if (pTrigger != nullptr)
 			{
-				pTrigger->Stop(pObject->GetImplDataPtr());
+				pTrigger->Stop(pObject->GetImplData());
 				result = ERequestStatus::Success;
 			}
 
@@ -2447,14 +2693,14 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::SetParameter> const*>(request.GetData());
 
-			CParameter const* const pParameter = stl::find_in_map(g_parameters, pRequestData->parameterId, nullptr);
+			CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, pRequestData->parameterId, nullptr);
 
 			if (pParameter != nullptr)
 			{
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				pParameter->Set(*pObject, pRequestData->value);
 #else
-				pParameter->Set(pObject->GetImplDataPtr(), pRequestData->value);
+				pParameter->Set(pObject->GetImplData(), pRequestData->value);
 #endif    // CRY_AUDIO_USE_DEBUG_CODE
 
 				result = ERequestStatus::Success;
@@ -2466,7 +2712,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::SetSwitchState> const*>(request.GetData());
 
-			CSwitch const* const pSwitch = stl::find_in_map(g_switches, pRequestData->switchId, nullptr);
+			CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, pRequestData->switchId, nullptr);
 
 			if (pSwitch != nullptr)
 			{
@@ -2477,7 +2723,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 					pState->Set(*pObject);
 #else
-					pState->Set(pObject->GetImplDataPtr());
+					pState->Set(pObject->GetImplData());
 #endif      // CRY_AUDIO_USE_DEBUG_CODE
 
 					result = ERequestStatus::Success;
@@ -2518,7 +2764,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::SetEnvironment> const*>(request.GetData());
 
-			CEnvironment const* const pEnvironment = stl::find_in_map(g_environments, pRequestData->environmentId, nullptr);
+			CEnvironment const* const pEnvironment = stl::find_in_map(g_environmentLookup, pRequestData->environmentId, nullptr);
 
 			if (pEnvironment != nullptr)
 			{
@@ -2539,13 +2785,31 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 			break;
 		}
 #endif // CRY_AUDIO_USE_OCCLUSION
+	case EObjectRequestType::AddListener:
+		{
+			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::AddListener> const*>(request.GetData());
+
+			pObject->HandleAddListener(pRequestData->listenerId);
+			result = ERequestStatus::Success;
+
+			break;
+		}
+	case EObjectRequestType::RemoveListener:
+		{
+			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::RemoveListener> const*>(request.GetData());
+
+			pObject->HandleRemoveListener(pRequestData->listenerId);
+			result = ERequestStatus::Success;
+
+			break;
+		}
 	case EObjectRequestType::ToggleAbsoluteVelocityTracking:
 		{
 			auto const pRequestData = static_cast<SObjectRequestData<EObjectRequestType::ToggleAbsoluteVelocityTracking> const*>(request.GetData());
 
 			if (pRequestData->isEnabled)
 			{
-				pObject->GetImplDataPtr()->ToggleFunctionality(EObjectFunctionality::TrackAbsoluteVelocity, true);
+				pObject->GetImplData()->ToggleFunctionality(EObjectFunctionality::TrackAbsoluteVelocity, true);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				pObject->SetFlag(EObjectFlags::TrackAbsoluteVelocity);
@@ -2553,7 +2817,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 			}
 			else
 			{
-				pObject->GetImplDataPtr()->ToggleFunctionality(EObjectFunctionality::TrackAbsoluteVelocity, false);
+				pObject->GetImplData()->ToggleFunctionality(EObjectFunctionality::TrackAbsoluteVelocity, false);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				pObject->RemoveFlag(EObjectFlags::TrackAbsoluteVelocity);
@@ -2569,7 +2833,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 
 			if (pRequestData->isEnabled)
 			{
-				pObject->GetImplDataPtr()->ToggleFunctionality(EObjectFunctionality::TrackRelativeVelocity, true);
+				pObject->GetImplData()->ToggleFunctionality(EObjectFunctionality::TrackRelativeVelocity, true);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				pObject->SetFlag(EObjectFlags::TrackRelativeVelocity);
@@ -2577,7 +2841,7 @@ ERequestStatus CSystem::ProcessObjectRequest(CRequest const& request)
 			}
 			else
 			{
-				pObject->GetImplDataPtr()->ToggleFunctionality(EObjectFunctionality::TrackRelativeVelocity, false);
+				pObject->GetImplData()->ToggleFunctionality(EObjectFunctionality::TrackRelativeVelocity, false);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 				pObject->RemoveFlag(EObjectFlags::TrackRelativeVelocity);
@@ -2893,18 +3157,67 @@ ERequestStatus CSystem::HandleSetImpl(Impl::IImpl* const pIImpl)
 		g_pIImpl = static_cast<Impl::IImpl*>(pImpl);
 	}
 
-	CRY_ASSERT_MESSAGE(g_object.GetImplDataPtr() == nullptr, "<Audio> The global object's impl-data must be nullptr during %s", __FUNCTION__);
-	g_object.SetImplDataPtr(g_pIImpl->ConstructGlobalObject());
+	CRY_ASSERT_MESSAGE(g_defaultListener.GetImplData() == nullptr, "<Audio> The default listeners's impl-data must be nullptr during %s", __FUNCTION__);
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
-	CRY_ASSERT_MESSAGE(g_previewObject.GetImplDataPtr() == nullptr, "<Audio> The preview object's impl-data must be nullptr during %s", __FUNCTION__);
-	g_previewObject.SetImplDataPtr(g_pIImpl->ConstructObject(g_previewObject.GetTransformation(), g_previewObject.GetName()));
+	g_defaultListener.SetImplData(g_pIImpl->ConstructListener(g_defaultListener.GetDebugTransformation(), g_szDefaultListenerName));
+#else
+	g_defaultListener.SetImplData(g_pIImpl->ConstructListener(CTransformation::GetEmptyObject(), g_szDefaultListenerName));
+#endif // CRY_AUDIO_USE_DEBUG_CODE
+
+	CRY_ASSERT_MESSAGE(g_pIObject == nullptr, "<Audio> g_pIObject must be nullptr during %s", __FUNCTION__);
+	Impl::IListeners const defaultImplListener{ g_defaultListener.GetImplData() };
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	g_pIObject = g_pIImpl->ConstructObject(CTransformation::GetEmptyObject(), defaultImplListener, g_szGlobalName);
+#else
+	g_pIObject = g_pIImpl->ConstructObject(CTransformation::GetEmptyObject(), defaultImplListener);
+#endif // CRY_AUDIO_USE_DEBUG_CODE
+
+	string const listenerNames = g_cvars.m_pListeners->GetString();
+
+	if (!listenerNames.empty())
+	{
+		int curPos = 0;
+		string listenerName = listenerNames.Tokenize(",", curPos);
+
+		while (!listenerName.empty())
+		{
+			listenerName.Trim();
+
+			if (g_listenerManager.GetListener(StringToId(listenerName.c_str())) == &g_defaultListener)
+			{
+				g_listenerManager.CreateListener(CTransformation::GetEmptyObject(), listenerName.c_str(), false);
+			}
+
+			listenerName = listenerNames.Tokenize(",", curPos);
+		}
+	}
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	CRY_ASSERT_MESSAGE(g_previewListener.GetImplData() == nullptr, "<Audio> The preview listeners's impl-data must be nullptr during %s", __FUNCTION__);
+	g_previewListener.SetImplData(g_pIImpl->ConstructListener(CTransformation::GetEmptyObject(), g_szPreviewListenerName));
+
+	CRY_ASSERT_MESSAGE(g_previewObject.GetImplData() == nullptr, "<Audio> The preview object's impl-data must be nullptr during %s", __FUNCTION__);
+	Impl::IListeners const previewImplListener{ g_previewListener.GetImplData() };
+	g_previewObject.SetImplData(g_pIImpl->ConstructObject(CTransformation::GetEmptyObject(), previewImplListener, g_previewObject.GetName()));
+	g_previewObject.SetFlag(EObjectFlags::IgnoreDrawDebugInfo);
+
+	g_listenerManager.ReconstructImplData();
 
 	for (auto const pObject : g_constructedObjects)
 	{
-		CRY_ASSERT_MESSAGE(pObject->GetImplDataPtr() == nullptr, "<Audio> The object's impl-data must be nullptr during %s", __FUNCTION__);
+		CRY_ASSERT_MESSAGE(pObject->GetImplData() == nullptr, "<Audio> The object's impl-data must be nullptr during %s", __FUNCTION__);
 
-		pObject->SetImplDataPtr(g_pIImpl->ConstructObject(pObject->GetTransformation(), pObject->GetName()));
+		Listeners const& listeners = pObject->GetListeners();
+		Impl::IListeners implListeners;
+
+		for (auto const pListener : listeners)
+		{
+			implListeners.push_back(pListener->GetImplData());
+		}
+
+		pObject->SetImplData(g_pIImpl->ConstructObject(pObject->GetTransformation(), implListeners, pObject->GetName()));
 	}
 
 	for (auto const& contextPair : g_contextInfo)
@@ -2937,9 +3250,7 @@ ERequestStatus CSystem::HandleSetImpl(Impl::IImpl* const pIImpl)
 	}
 
 	HandleUpdateDebugInfo();
-
 #endif // CRY_AUDIO_USE_DEBUG_CODE
-	g_listenerManager.OnAfterImplChanged();
 
 	SetImplLanguage();
 
@@ -2958,7 +3269,7 @@ void CSystem::SetImplLanguage()
 //////////////////////////////////////////////////////////////////////////
 void CSystem::HandleActivateContext(ContextId const contextId)
 {
-	CryFixedStringT<MaxFileNameLength> const contextName = stl::find_in_map(g_registeredContexts, contextId, "");
+	CryFixedStringT<MaxFileNameLength> const contextName = stl::find_in_map(g_contextLookup, contextId, "");
 
 	if (!contextName.empty())
 	{
@@ -3052,7 +3363,7 @@ void CSystem::SetCurrentEnvironmentsOnObject(CObject* const pObject, EntityId co
 
 			if (entityToIgnore == INVALID_ENTITYID || entityToIgnore != areaInfo.envProvidingEntityId)
 			{
-				CEnvironment const* const pEnvironment = stl::find_in_map(g_environments, areaInfo.audioEnvironmentId, nullptr);
+				CEnvironment const* const pEnvironment = stl::find_in_map(g_environmentLookup, areaInfo.audioEnvironmentId, nullptr);
 
 				if (pEnvironment != nullptr)
 				{
@@ -3379,44 +3690,17 @@ void DrawRequestDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float posY)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void DrawGlobalObjectInfo(
-	IRenderAuxGeom& auxGeom,
-	float const posX,
-	float& posY,
-	CGlobalObject const& globalObject,
-	CryFixedStringT<MaxControlNameLength> const& lowerCaseSearchString,
-	size_t& numObjects)
-{
-	char const* const szObjectName = globalObject.GetName();
-	CryFixedStringT<MaxControlNameLength> lowerCaseObjectName(szObjectName);
-	lowerCaseObjectName.MakeLower();
-	bool const hasActiveData = globalObject.IsActive();
-	bool const stringFound = (lowerCaseSearchString.empty() || (lowerCaseSearchString.compareNoCase("0") == 0)) || (lowerCaseObjectName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos);
-	bool const draw = stringFound && ((g_cvars.m_hideInactiveObjects == 0) || ((g_cvars.m_hideInactiveObjects != 0) && hasActiveData));
-
-	if (draw)
-	{
-		auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize,
-		                    !hasActiveData ? Debug::s_globalColorInactive : Debug::s_listColorItemActive,
-		                    false,
-		                    "%s", szObjectName);
-
-		posY += Debug::g_listLineHeight;
-		++numObjects;
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
 void DrawObjectInfo(
 	IRenderAuxGeom& auxGeom,
 	float const posX,
 	float& posY,
+	Vec3 const& camPos,
 	CObject const& object,
 	CryFixedStringT<MaxControlNameLength> const& lowerCaseSearchString,
 	size_t& numObjects)
 {
 	Vec3 const& position = object.GetTransformation().GetPosition();
-	float const distance = position.GetDistance(g_listenerManager.GetActiveListenerTransformation().GetPosition());
+	float const distance = position.GetDistance(camPos);
 
 	if ((g_cvars.m_debugDistance <= 0.0f) || ((g_cvars.m_debugDistance > 0.0f) && (distance < g_cvars.m_debugDistance)))
 	{
@@ -3464,13 +3748,18 @@ void DrawObjectDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float posY)
 	lowerCaseSearchString.MakeLower();
 
 	posY += Debug::g_listHeaderLineHeight;
+	Vec3 const& camPos = GetISystem()->GetViewCamera().GetPosition();
 
-	DrawGlobalObjectInfo(auxGeom, posX, posY, g_object, lowerCaseSearchString, numObjects);
-	DrawGlobalObjectInfo(auxGeom, posX, posY, g_previewObject, lowerCaseSearchString, numObjects);
+	DrawObjectInfo(auxGeom, posX, posY, camPos, g_previewObject, lowerCaseSearchString, numObjects);
 
 	for (auto const pObject : g_constructedObjects)
 	{
-		DrawObjectInfo(auxGeom, posX, posY, *pObject, lowerCaseSearchString, numObjects);
+		float const distance = pObject->GetTransformation().GetPosition().GetDistance(camPos);
+
+		if ((g_cvars.m_debugDistance <= 0.0f) || ((g_cvars.m_debugDistance > 0.0f) && (distance <= g_cvars.m_debugDistance)))
+		{
+			DrawObjectInfo(auxGeom, posX, posY, camPos, *pObject, lowerCaseSearchString, numObjects);
+		}
 	}
 
 	auxGeom.Draw2dLabel(posX, headerPosY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Audio Objects [%" PRISIZE_T "]", numObjects);
@@ -3485,14 +3774,17 @@ void DrawPerActiveObjectDebugInfo(IRenderAuxGeom& auxGeom)
 
 	for (auto const pObject : g_activeObjects)
 	{
-		pObject->DrawDebugInfo(auxGeom, isTextFilterDisabled, lowerCaseSearchString);
+		if ((pObject->GetFlags() & EObjectFlags::IgnoreDrawDebugInfo) == 0)
+		{
+			pObject->DrawDebugInfo(auxGeom, isTextFilterDisabled, lowerCaseSearchString);
+		}
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void DrawContextDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float posY)
 {
-	auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Contexts [%" PRISIZE_T "]", g_registeredContexts.size() + 1);
+	auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Contexts [%" PRISIZE_T "]", g_contextLookup.size() + 1);
 	posY += Debug::g_listHeaderLineHeight;
 
 	for (auto const& contextPair : g_contextDebugInfo)
@@ -3506,6 +3798,200 @@ void DrawContextDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float posY)
 			"%s", contextPair.first.c_str());
 
 		posY += Debug::g_listLineHeight;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+void DrawGlobalDataDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float posY)
+{
+	auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, g_szGlobalName);
+	posY += Debug::g_listHeaderLineHeight;
+
+	// Check if text filter is enabled.
+	CryFixedStringT<MaxControlNameLength> lowerCaseSearchString(g_cvars.m_pDebugFilter->GetString());
+	lowerCaseSearchString.MakeLower();
+	bool const isTextFilterDisabled = (lowerCaseSearchString.empty() || (lowerCaseSearchString.compareNoCase("0") == 0));
+	bool const filterAllObjectInfo = (g_cvars.m_drawDebug & Debug::EDrawFilter::FilterAllObjectInfo) != 0;
+
+	// Check if any trigger matches text filter.
+	bool doesTriggerMatchFilter = false;
+	std::vector<CryFixedStringT<MaxMiscStringLength>> triggerInfo;
+
+	if (!g_triggerInstances.empty() || filterAllObjectInfo)
+	{
+		Debug::TriggerCounts triggerCounts;
+
+		for (auto const& triggerInstancePair : g_triggerInstances)
+		{
+			++(triggerCounts[triggerInstancePair.second->GetTriggerId()]);
+		}
+
+		for (auto const& triggerCountsPair : triggerCounts)
+		{
+			CTrigger const* const pTrigger = stl::find_in_map(g_triggerLookup, triggerCountsPair.first, nullptr);
+
+			if (pTrigger != nullptr)
+			{
+				char const* const szTriggerName = pTrigger->GetName();
+
+				if (!isTextFilterDisabled)
+				{
+					CryFixedStringT<MaxControlNameLength> lowerCaseTriggerName(szTriggerName);
+					lowerCaseTriggerName.MakeLower();
+
+					if (lowerCaseTriggerName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos)
+					{
+						doesTriggerMatchFilter = true;
+					}
+				}
+
+				CryFixedStringT<MaxMiscStringLength> debugText;
+				uint8 const numInstances = triggerCountsPair.second;
+
+				if (numInstances == 1)
+				{
+					debugText.Format("%s\n", szTriggerName);
+				}
+				else
+				{
+					debugText.Format("%s: %u\n", szTriggerName, numInstances);
+				}
+
+				triggerInfo.emplace_back(debugText);
+			}
+		}
+	}
+
+	// Check if any state or switch matches text filter.
+	bool doesStateSwitchMatchFilter = false;
+	std::map<CSwitch const* const, CSwitchState const* const> switchStateInfo;
+
+	if (!g_switchStates.empty() || filterAllObjectInfo)
+	{
+		for (auto const& switchStatePair : g_switchStates)
+		{
+			CSwitch const* const pSwitch = stl::find_in_map(g_switchLookup, switchStatePair.first, nullptr);
+
+			if (pSwitch != nullptr)
+			{
+				CSwitchState const* const pSwitchState = stl::find_in_map(pSwitch->GetStates(), switchStatePair.second, nullptr);
+
+				if (pSwitchState != nullptr)
+				{
+					if (!isTextFilterDisabled)
+					{
+						char const* const szSwitchName = pSwitch->GetName();
+						CryFixedStringT<MaxControlNameLength> lowerCaseSwitchName(szSwitchName);
+						lowerCaseSwitchName.MakeLower();
+						char const* const szStateName = pSwitchState->GetName();
+						CryFixedStringT<MaxControlNameLength> lowerCaseStateName(szStateName);
+						lowerCaseStateName.MakeLower();
+
+						if ((lowerCaseSwitchName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos) ||
+						    (lowerCaseStateName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos))
+						{
+							doesStateSwitchMatchFilter = true;
+						}
+					}
+
+					switchStateInfo.emplace(pSwitch, pSwitchState);
+				}
+			}
+		}
+	}
+
+	// Check if any parameter matches text filter.
+	bool doesParameterMatchFilter = false;
+	std::map<char const* const, float const> parameterInfo;
+
+	if (!g_parameters.empty() || filterAllObjectInfo)
+	{
+		for (auto const& parameterPair : g_parameters)
+		{
+			CParameter const* const pParameter = stl::find_in_map(g_parameterLookup, parameterPair.first, nullptr);
+
+			if (pParameter != nullptr)
+			{
+				char const* const szParameterName = pParameter->GetName();
+
+				if (!isTextFilterDisabled)
+				{
+					CryFixedStringT<MaxControlNameLength> lowerCaseParameterName(szParameterName);
+					lowerCaseParameterName.MakeLower();
+
+					if (lowerCaseParameterName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos)
+					{
+						doesParameterMatchFilter = true;
+					}
+				}
+
+				parameterInfo.emplace(szParameterName, parameterPair.second);
+			}
+		}
+	}
+
+	if (isTextFilterDisabled || doesTriggerMatchFilter)
+	{
+		for (auto const& debugText : triggerInfo)
+		{
+			auxGeom.Draw2dLabel(
+				posX,
+				posY,
+				Debug::g_objectFontSize,
+				Debug::s_objectColorTrigger,
+				false,
+				"%s", debugText.c_str());
+
+			posY += Debug::g_objectLineHeight;
+		}
+	}
+
+	if (isTextFilterDisabled || doesStateSwitchMatchFilter)
+	{
+		for (auto const& switchStatePair : switchStateInfo)
+		{
+			auto const pSwitch = switchStatePair.first;
+			auto const pSwitchState = switchStatePair.second;
+
+			Debug::CStateDrawData& drawData = g_stateDrawInfo.emplace(std::piecewise_construct, std::forward_as_tuple(pSwitch->GetId()), std::forward_as_tuple(pSwitchState->GetId())).first->second;
+			drawData.Update(pSwitchState->GetId());
+			ColorF const switchTextColor = { 0.8f, drawData.m_currentSwitchColor, 0.6f };
+
+			auxGeom.Draw2dLabel(
+				posX,
+				posY,
+				Debug::g_objectFontSize,
+				switchTextColor,
+				false,
+				"%s: %s\n",
+				pSwitch->GetName(),
+				pSwitchState->GetName());
+
+			posY += Debug::g_objectLineHeight;
+		}
+	}
+
+	if (isTextFilterDisabled || doesParameterMatchFilter)
+	{
+		for (auto const& parameterPair : parameterInfo)
+		{
+			auxGeom.Draw2dLabel(
+				posX,
+				posY,
+				Debug::g_objectFontSize,
+				Debug::s_objectColorParameter,
+				false,
+				"%s: %2.2f\n",
+				parameterPair.first,
+				parameterPair.second);
+
+			posY += Debug::g_objectLineHeight;
+		}
+	}
+
+	if ((g_cvars.m_drawDebug & Debug::EDrawFilter::ObjectImplInfo) != 0)
+	{
+		g_pIObject->DrawDebugInfo(auxGeom, posX, posY, (isTextFilterDisabled ? nullptr : lowerCaseSearchString.c_str()));
 	}
 }
 
@@ -3561,6 +4047,19 @@ void CSystem::HandleDrawDebug()
 					Debug::DrawMemoryPoolInfo(*pAuxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Objects", m_objectPoolSize);
 				}
 			}
+
+	#if defined(CRY_AUDIO_USE_OCCLUSION)
+			{
+				auto& allocator = SOcclusionInfo::GetAllocator();
+				size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+				totalPoolSize += memAlloc;
+
+				if (drawDetailedMemInfo)
+				{
+					Debug::DrawMemoryPoolInfo(*pAuxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Occlusion Infos", m_objectPoolSize);
+				}
+			}
+	#endif // CRY_AUDIO_USE_OCCLUSION
 
 			{
 				auto& allocator = CTriggerInstance::GetAllocator();
@@ -3707,7 +4206,7 @@ void CSystem::HandleDrawDebug()
 
 			size_t const numObjects = g_constructedObjects.size();
 			size_t const numActiveObjects = g_activeObjects.size();
-			size_t const numListeners = g_listenerManager.GetNumActiveListeners();
+			size_t const numListeners = g_listenerManager.GetNumListeners();
 			size_t const numEventListeners = g_eventListenerManager.GetNumEventListeners();
 
 	#if defined(CRY_AUDIO_USE_OCCLUSION)
@@ -3813,9 +4312,9 @@ void CSystem::HandleDrawDebug()
 			debugDraw += "Occlusion Collision Spheres, ";
 		}
 
-		if ((g_cvars.m_drawDebug & Debug::EDrawFilter::GlobalObjectInfo) != 0)
+		if ((g_cvars.m_drawDebug & Debug::EDrawFilter::GlobalPlaybackInfo) != 0)
 		{
-			debugDraw += "Global Object Info, ";
+			debugDraw += "Default Object Info, ";
 		}
 
 		if ((g_cvars.m_drawDebug & Debug::EDrawFilter::ObjectImplInfo) != 0)
@@ -3864,9 +4363,9 @@ void CSystem::HandleDrawDebug()
 			posX += 600.0f;
 		}
 
-		if ((g_cvars.m_drawDebug & Debug::EDrawFilter::GlobalObjectInfo) != 0)
+		if ((g_cvars.m_drawDebug & Debug::EDrawFilter::GlobalPlaybackInfo) != 0)
 		{
-			g_object.DrawDebugInfo(*pAuxGeom, posX, posY);
+			DrawGlobalDataDebugInfo(*pAuxGeom, posX, posY);
 			posX += 400.0f;
 		}
 
@@ -3886,7 +4385,9 @@ void CSystem::HandleDrawDebug()
 		{
 			if (g_pIImpl != nullptr)
 			{
-				g_pIImpl->DrawDebugInfoList(*pAuxGeom, posX, posY, g_cvars.m_debugDistance, g_cvars.m_pDebugFilter->GetString());
+				Vec3 const& camPos = GetISystem()->GetViewCamera().GetPosition();
+
+				g_pIImpl->DrawDebugInfoList(*pAuxGeom, posX, posY, camPos, g_cvars.m_debugDistance, g_cvars.m_pDebugFilter->GetString());
 				// The impl is responsible for increasing posX.
 			}
 		}
@@ -3909,8 +4410,8 @@ void CSystem::HandleRetriggerControls()
 		pObject->ForceImplementationRefresh();
 	}
 
-	g_object.ForceImplementationRefresh(false);
-	g_previewObject.ForceImplementationRefresh(true);
+	ForceGlobalDataImplRefresh();
+	g_previewObject.ForceImplementationRefresh();
 
 	if ((g_systemStates& ESystemStates::IsMuted) != 0)
 	{

@@ -181,6 +181,7 @@ void CFeatureRenderSprites::ComputeVertices(const CParticleComponentRuntime& run
 	{
 		SortSprites(spritesContext);
   		WriteToGPUMem(spritesContext);
+		stats.spawners.rendered += runtime.Container(EDD_Spawner).Size();
 		stats.particles.rendered += spritesContext.m_particleIds.size();
 		stats.particles.culled += runtime.GetContainer().GetNumParticles() - spritesContext.m_particleIds.size();
 
@@ -196,7 +197,7 @@ void CFeatureRenderSprites::CullParticles(SSpritesContext& spritesContext)
 
 	const CParticleComponentRuntime& runtime = spritesContext.m_runtime;
 	const CParticleEmitter& emitter = *runtime.GetEmitter();
-	const CCamera& camera = *spritesContext.m_camInfo.pCamera;
+	const CCamera& camera = *spritesContext.m_camInfo.pMainCamera;
 	const Vec3 cameraPosition = camera.GetPosition();
 
 	// frustum and distance culling
@@ -214,7 +215,7 @@ void CFeatureRenderSprites::CullParticles(SSpritesContext& spritesContext)
 	const bool cullArea = maxArea > spritesContext.m_areaLimit;
 	const bool sumArea = cullArea || maxArea > 1.0f / 256.0f;
 	const bool cullDist = cullNear.DoCulling() || cullFar.DoCulling() || sumArea;
-	const bool culling = frustumTest.doTest || cullDist;
+	const bool culling = (frustumTest.doTest || cullDist) && !spritesContext.m_camInfo.bShadowPass;
 	const bool stretching = m_facingMode == EFacingMode::Velocity && m_axisScale != 0.0f;
 
 	auto& memHeap = GetPSystem()->GetThreadData().memHeap;
@@ -291,7 +292,7 @@ void CFeatureRenderSprites::CullParticles(SSpritesContext& spritesContext)
 		{
 			CRY_PROFILE_SECTION(PROFILE_PARTICLE, "pfx2::CullParticles:VisArea");
 			CRY_PFX2_ASSERT(container.HasData(EPDT_Size));
-			Matrix34 viewTM = spritesContext.m_camInfo.pCamera->GetMatrix();
+			const Matrix34& viewTM = camera.GetMatrix();
 			Vec3 normal = -viewTM.GetColumn0();
 
 			numParticles = 0;
@@ -376,6 +377,8 @@ void CFeatureRenderSprites::SortSprites(SSpritesContext& spritesContext)
 {
 	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
+	if (spritesContext.m_camInfo.bShadowPass)
+		return;
 	const uint renderState = spritesContext.m_runtime.ComponentParams().m_renderStateFlags;
 	if (m_sortMode == ESortMode::None || !(renderState & OS_ALPHA_BLEND) || GetCVars()->e_ParticlesSortQuality == 0)
 		return;
@@ -403,7 +406,7 @@ void CFeatureRenderSprites::SortSprites(SSpritesContext& spritesContext)
 				keys[i] = (float)ids.Load(particleId);
 			}
 		}
-		else if (std::isfinite(spritesContext.m_runtime.ComponentParams().m_maxTotalLIfe)
+		else if (!spritesContext.m_runtime.ComponentParams().IsImmortal()
 		&& container.HasData(EPDT_SpawnFraction))
 		{
 			auto fractions = container.IStream(EPDT_SpawnFraction);
@@ -460,7 +463,7 @@ public:
 	CSpriteFacingModeScreen(const CParticleContainer& container, const CCamera& camera)
 		: m_sizes(container.GetIFStream(EPDT_Size))
 	{
-		Matrix34 viewTM = camera.GetMatrix();
+		const Matrix34& viewTM = camera.GetMatrix();
 		m_xAxis = viewTM.GetColumn0();
 		m_yAxis = -viewTM.GetColumn2();
 	}
@@ -487,19 +490,17 @@ public:
 		: m_positions(container.GetIVec3Stream(EPVF_Position))
 		, m_sizes(container.GetIFStream(EPDT_Size))
 		, m_cameraPosition(camera.GetPosition())
-		, m_cameraXAxis(camera.GetMatrix().GetColumn0())
 	{}
 
 	ILINE SParticleAxes Sample(TParticleId particleId) const
 	{
 		SParticleAxes axes;
-		const Vec3 particlePosition = m_positions.Load(particleId);
 		const float size = m_sizes.Load(particleId);
-
+		const Vec3 particlePosition = m_positions.Load(particleId);
 		const Vec3 posView = particlePosition - m_cameraPosition;
-		axes.xAxis = Vec3(posView.y, -posView.x, 0.0f).GetNormalizedSafe(m_cameraXAxis) * size;
-		axes.yAxis = (posView ^ axes.xAxis).GetNormalized(size);
 
+		axes.xAxis = Vec3(posView.y, -posView.x, 0.0f).GetNormalizedSafe(Vec3(1, 0, 0)) * size;
+		axes.yAxis = (posView ^ axes.xAxis).GetNormalized(size);
 		return axes;
 	}
 
@@ -507,7 +508,6 @@ private:
 	const IVec3Stream m_positions;
 	const IFStream    m_sizes;
 	Vec3              m_cameraPosition;
-	Vec3              m_cameraXAxis;
 };
 
 class CSpriteFacingModeVelocity

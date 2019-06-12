@@ -19,7 +19,7 @@ namespace Impl
 {
 namespace Fmod
 {
-class CBaseObject;
+class CObject;
 class CEvent;
 class CReturn;
 
@@ -42,7 +42,7 @@ public:
 	CEventInstance& operator=(CEventInstance&&) = delete;
 
 #if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
-	explicit CEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event, CBaseObject const& baseObject)
+	explicit CEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event, CObject const& object)
 		: m_triggerInstanceId(triggerInstanceId)
 		, m_event(event)
 		, m_state(EEventState::Pending)
@@ -54,7 +54,7 @@ public:
 		, m_toBeRemoved(false)
 		, m_isPaused(false)
 		, m_isFadingOut(false)
-		, m_baseObject(baseObject)
+		, m_object(object)
 	{}
 #else
 	explicit CEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event)
@@ -80,6 +80,8 @@ public:
 	FMOD::Studio::EventInstance* GetFmodEventInstance() const                                       { return m_pInstance; }
 	void                         SetFmodEventInstance(FMOD::Studio::EventInstance* const pInstance) { m_pInstance = pInstance; }
 
+	void                         SetListenermask(int const mask)                                    { m_pInstance->setListenerMask(mask); }
+
 	bool                         PrepareForOcclusion();
 	void                         SetOcclusion(float const occlusion);
 	void                         SetReturnSend(CReturn const* const pReturn, float const value);
@@ -94,8 +96,8 @@ public:
 	bool                         IsPaused() const               { return m_isPaused; }
 
 #if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
-	bool               IsFadingOut() const { return m_isFadingOut; }
-	CBaseObject const& GetObject() const   { return m_baseObject; }
+	bool           IsFadingOut() const { return m_isFadingOut; }
+	CObject const& GetObject() const   { return m_object; }
 #endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 private:
@@ -116,8 +118,8 @@ private:
 	bool                         m_isPaused;
 
 #if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
-	bool               m_isFadingOut;
-	CBaseObject const& m_baseObject;
+	bool           m_isFadingOut;
+	CObject const& m_object;
 #endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 };
 } // namespace Fmod

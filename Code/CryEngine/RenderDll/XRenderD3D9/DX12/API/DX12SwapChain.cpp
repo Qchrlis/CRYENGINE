@@ -76,19 +76,9 @@ CSwapChain* CSwapChain::Create(CCommandListPool& commandQueue, IDXGISwapChain1To
 {
 	IDXGISwapChainToCall* pDXGISwapChain = swapchain;
 	IDXGISwapChain3ToCall* pDXGISwapChain3 = nullptr;
-	ID3D12CommandQueue* pQueue12 = commandQueue.GetD3D12CommandQueue();
-
-#ifdef DX12_LINKEDADAPTER
-	// Put swap-chain on node "0"
-	if (commandQueue.GetDevice()->IsMultiAdapter())
-	{
-		pQueue12 = commandQueue.GetDevice()->GetNativeObject(pQueue12, 0);
-	}
-#endif
 
 	HRESULT hr = S_OK;
-
-	if (hr == S_OK && pDXGISwapChain)
+	if (pDXGISwapChain)
 	{
 		hr = pDXGISwapChain->QueryInterface(IID_GFX_ARGS(&pDXGISwapChain3));
 		pDXGISwapChain->Release();
@@ -181,16 +171,15 @@ void CSwapChain::AcquireBuffers()
 		std::vector<UINT> createNodeMasks(m_Desc.BufferCount, 0x1);
 		std::vector<IUnknown*> presentCommandQueues(m_Desc.BufferCount, pDevice->GetNativeObject(m_pCommandQueue.GetD3D12CommandQueue(), 0));
 
-		CRY_DX12_VERIFY(
-			m_pDXGISwapChain->ResizeBuffers1(
-		  m_Desc.BufferCount,
-		  m_Desc.BufferDesc.Width,
-		  m_Desc.BufferDesc.Height,
-		  m_Desc.BufferDesc.Format,
-		  m_Desc.Flags,
-		  &createNodeMasks[0],
-		  &presentCommandQueues[0]) == S_OK,
-			"Failed to re-locate the swap-chain's backbuffer(s) to all device nodes!");
+		if (m_pDXGISwapChain->ResizeBuffers1(
+			m_Desc.BufferCount,
+			m_Desc.BufferDesc.Width,
+			m_Desc.BufferDesc.Height,
+			m_Desc.BufferDesc.Format,
+			m_Desc.Flags,
+			&createNodeMasks[0],
+			&presentCommandQueues[0]) != S_OK)
+			DX12_ERROR("Failed to re-locate the swap-chain's backbuffer(s) to all device nodes!");
 	}
 #endif
 
@@ -296,6 +285,26 @@ void CSwapChain::ForfeitBuffers()
 	VerifyBufferCounters();
 
 	m_BackBuffers.clear();
+}
+
+void CSwapChain::FlushAndWaitForBuffers()
+{
+	UINT64 fenceValues[CMDQUEUE_NUM] = { 0ULL, 0ULL, 0ULL };
+
+	// Get the fence-front for any of the back-buffer resources
+	for (int i = 0; i < m_Desc.BufferCount; ++i)
+	{
+		std::upr(fenceValues[CMDQUEUE_GRAPHICS], m_BackBuffers[i].GetFenceValue(CMDQUEUE_GRAPHICS, CMDTYPE_ANY));
+		std::upr(fenceValues[CMDQUEUE_COMPUTE ], m_BackBuffers[i].GetFenceValue(CMDQUEUE_COMPUTE , CMDTYPE_ANY));
+		std::upr(fenceValues[CMDQUEUE_COPY    ], m_BackBuffers[i].GetFenceValue(CMDQUEUE_COPY    , CMDTYPE_ANY));
+	}
+
+	// Wait that that front has passed before continuing
+	if (m_Desc.BufferCount)
+	{
+		auto* pDevice = m_BackBuffers[0].GetDevice();
+		pDevice->FlushAndWaitForGPU(fenceValues);
+	}
 }
 
 }

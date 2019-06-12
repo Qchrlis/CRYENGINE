@@ -52,7 +52,7 @@ void CSceneForwardStage::Init()
 #endif
 
 	m_pPerPassCB = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(SPerPassConstantBuffer));
-	CRY_VERIFY(PreparePerPassResources(true));
+	CRY_VERIFY(UpdatePerPassResources(true));
 
 #if RENDERER_ENABLE_FULL_PIPELINE
 	// Create resource layout
@@ -189,16 +189,16 @@ void CSceneForwardStage::Update()
 			// Depth
 			pDepthTexture,
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
-		// Overlay forward scene pass
+		// Overlay forward scene pass (2 channels)
 		m_forwardEyeOverlayPass.SetViewport(viewport);
 		m_forwardEyeOverlayPass.SetRenderTargets(
 			// Depth
 			pDepthTexture,
 			// Color 0
-			CRendererResources::s_ptexSceneDiffuse
+			m_graphicsPipelineResources.m_pTexClipVolumes
 			);
 
 		m_forwardOverlayPass.SetViewport(viewport);
@@ -206,7 +206,7 @@ void CSceneForwardStage::Update()
 			// Depth
 			pDepthTexture,
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
 		// Transparent forward scene passes
@@ -215,7 +215,7 @@ void CSceneForwardStage::Update()
 			// Depth
 			pDepthTexture,
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
 		m_forwardTransparentAWPass.SetViewport(viewport);
@@ -223,15 +223,15 @@ void CSceneForwardStage::Update()
 			// Depth
 			pDepthTexture,
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
 		m_forwardTransparentLoResPass.SetViewport(viewport);
 		m_forwardTransparentLoResPass.SetRenderTargets(
 			// Depth
-			CRendererResources::s_ptexSceneDepthScaled[0],//[1]//[2]
+			m_graphicsPipelineResources.m_pTexSceneDepthScaled[0],//[1]//[2]
 			// Color 0
-			CRendererResources::s_ptexHDRTargetScaled[0][0]//[1][0]//[2][0]
+			m_graphicsPipelineResources.m_pTexHDRTargetScaled[0][0]//[1][0]//[2][0]
 			);
 
 		m_forwardHDRPass.SetViewport(viewport);
@@ -240,7 +240,7 @@ void CSceneForwardStage::Update()
 			pDepthTexture,
 			// Color 0
 			// TODO: CPostEffectContext::GetDstBackBufferTexture() pre-EnableAltBackBuffer()
-			CRendererResources::s_ptexDisplayTargetDst
+			m_graphicsPipelineResources.m_pTexDisplayTargetDst
 			);
 
 		m_forwardLDRPass.SetViewport(viewport);
@@ -259,7 +259,7 @@ void CSceneForwardStage::Update()
 			// Depth
 			pRenderView->GetDepthTarget(),
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
 		m_forwardOverlayPassMobile.SetViewport(viewport);
@@ -267,7 +267,7 @@ void CSceneForwardStage::Update()
 			// Depth
 			pRenderView->GetDepthTarget(),
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 
 		m_forwardTransparentPassMobile.SetViewport(viewport);
@@ -275,7 +275,7 @@ void CSceneForwardStage::Update()
 			// Depth
 			pRenderView->GetDepthTarget(),
 			// Color 0
-			CRendererResources::s_ptexHDRTarget
+			m_graphicsPipelineResources.m_pTexHDRTarget
 			);
 #endif
 	}
@@ -320,7 +320,7 @@ void CSceneForwardStage::Update()
 	//  gcpRendD3D->GetCurrentTargetOutput()             After PostFX LDR
 
 	if (!CRendererCVars::CV_r_HDRTexFormat)
-		CClearSurfacePass::Execute(CRendererResources::s_ptexLinearDepthFixup, Clr_Empty);
+		CClearSurfacePass::Execute(m_graphicsPipelineResources.m_pTexLinearDepthFixup, Clr_Empty);
 }
 
 bool CSceneForwardStage::CreatePipelineState(const SGraphicsPipelineStateDescription& desc,
@@ -378,7 +378,7 @@ bool CSceneForwardStage::CreatePipelineState(const SGraphicsPipelineStateDescrip
 			return true;
 #endif
 
-		if (!m_graphicsPipeline.FillCommonScenePassStates(desc, psoDesc))
+		if (!CSceneRenderPass::FillCommonScenePassStates(desc, psoDesc, m_graphicsPipeline.GetVrProjectionManager()))
 			return true;
 
 		if (bRecursive)
@@ -400,6 +400,8 @@ bool CSceneForwardStage::CreatePipelineState(const SGraphicsPipelineStateDescrip
 				psoDesc.m_RenderState &= ~(GS_STENCIL | GS_DEPTHWRITE | GS_DEPTHFUNC_MASK | GS_ALPHATEST);
 				psoDesc.m_RenderState |= GS_DEPTHFUNC_EQUAL;
 				psoDesc.m_ShaderFlags_RT &= ~(g_HWSR_MaskBit[HWSR_ALPHATEST] | g_HWSR_MaskBit[HWSR_DISSOLVE]);
+
+				pSceneRenderPass = &m_forwardOpaquePass;
 			}
 			else if (passId == ePass_Forward)
 			{
@@ -420,7 +422,11 @@ bool CSceneForwardStage::CreatePipelineState(const SGraphicsPipelineStateDescrip
 				psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_FOG];
 
 				// volumetric fog supports only general pass currently.
-				if (pRenderer->m_bVolumetricFogEnabled)
+				EShaderRenderingFlags shaderRenderingFlags = (EShaderRenderingFlags)m_graphicsPipeline.GetPipelineDescription().shaderFlags;
+				
+				if (pRenderer->m_bVolumetricFogEnabled && 
+					m_graphicsPipeline.GetStage<CVolumetricFogStage>() &&
+					m_graphicsPipeline.GetStage<CVolumetricFogStage>()->IsStageActive(shaderRenderingFlags))
 				{
 					psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_VOLUMETRIC_FOG];
 				}
@@ -430,9 +436,10 @@ bool CSceneForwardStage::CreatePipelineState(const SGraphicsPipelineStateDescrip
 				psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_TILED_SHADING];
 		}
 
-		if (bRecursive && (bHair || bAfterHDRPostProcess || bAfterLDRPostProcess || bEyeOverlay))
+		if (bRecursive && (m_graphicsPipeline.GetPipelineDescription().shaderFlags & SHDF_FORWARD_MINIMAL) && 
+			(bHair || bAfterHDRPostProcess || bAfterLDRPostProcess || bEyeOverlay))
 		{
-			// recursive pass doesn't support EF2_HAIR and EF2_AFTERHDRPOSTPROCESS/EF2_AFTERPOSTPROCESS.
+			// recursive-minimum pass doesn't support EF2_HAIR and EF2_AFTERHDRPOSTPROCESS/EF2_AFTERPOSTPROCESS.
 			return true;
 		}
 		else if (bHair)
@@ -573,7 +580,7 @@ bool CSceneForwardStage::CreatePipelineStates(DevicePipelineStatesArray* pStateA
 	return bFullyCompiled;
 }
 
-bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask, bool bFog)
+bool CSceneForwardStage::UpdatePerPassResources(bool bOnInit, bool bShadowMask, bool bFog)
 {
 	CRenderView* pRenderView = RenderView();
 
@@ -583,7 +590,7 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 	auto* pVolFogStage    = m_graphicsPipeline.GetStage<CVolumetricFogStage>();
 	auto* pShadowMapStage = m_graphicsPipeline.GetStage<CShadowMapStage>();
 
-	CTexture* pShadowMask = bShadowMask ? CRendererResources::s_ptexShadowMask : CRendererResources::s_ptexBlack;
+	CTexture* pShadowMask = bShadowMask ? m_graphicsPipelineResources.m_pTexShadowMask : CRendererResources::s_ptexBlack;
 
 	enum EResourcesSubset
 	{
@@ -645,7 +652,7 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 		const uint32_t&         resourceSubset = resourceSetsToBuild[i].flags;
 
 		const bool includeTransparentPassResources = !!(resourceSubset & eResSubset_TiledShadingTransparent);
-		const bool includeEyeOverlayPassResources  = !!(resourceSubset & eResSubset_EyeOverlay);
+		const bool includeEyeOverlayPassResources  =  !(resourceSubset & eResSubset_EyeOverlay);
 		const bool includeForwardShadowResources   = !!(resourceSubset & eResSubset_ForwardShadows);
 
 		// Samplers
@@ -662,6 +669,7 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 			// Custom for pass
 			resources.SetSampler(10, EDefaultSamplerStates::BilinearWrap, EShaderStage_AllWithoutCompute);
 			resources.SetSampler(11, EDefaultSamplerStates::LinearCompare, EShaderStage_AllWithoutCompute);
+			resources.SetSampler(15, EDefaultSamplerStates::TrilinearClamp, EShaderStage_AllWithoutCompute);
 		}
 
 		// Textures
@@ -676,7 +684,7 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 			resources.SetTexture(ePerPassTexture_TerrainNormMap, CTexture::GetByID(nTerrainTex1), EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 			resources.SetTexture(ePerPassTexture_TerrainBaseMap, CTexture::GetByID(nTerrainTex0), EDefaultResourceViews::sRGB, EShaderStage_AllWithoutCompute);
 			resources.SetTexture(ePerPassTexture_NormalsFitting, CRendererResources::s_ptexNormalsFitting, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
-			resources.SetTexture(ePerPassTexture_SceneLinearDepth, CRendererResources::s_ptexLinearDepth, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+			resources.SetTexture(ePerPassTexture_SceneLinearDepth, m_graphicsPipelineResources.m_pTexLinearDepth, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 
 			resources.SetTexture(38, pShadowMask, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 			resources.SetTexture(39, CRendererResources::s_ptexNoise3D, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
@@ -685,9 +693,9 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 
 			if (includeTransparentPassResources) // Transparent pass only: allow writing motion vectors
 			{
-				resources.SetTexture(2, CRendererResources::s_ptexVelocityObjects[0], EDefaultResourceViews::UnorderedAccess, EShaderStage_Pixel);
+				resources.SetTexture(2, m_graphicsPipelineResources.m_pTexVelocityObjects[0], EDefaultResourceViews::UnorderedAccess, EShaderStage_Pixel);
 				if (!CRendererCVars::CV_r_HDRTexFormat)
-					resources.SetTexture(3, CRendererResources::s_ptexLinearDepthFixup, CRendererResources::s_ptexLinearDepthFixupUAV, EShaderStage_Pixel);
+					resources.SetTexture(3, m_graphicsPipelineResources.m_pTexLinearDepthFixup, m_graphicsPipelineResources.m_pTexLinearDepthFixupUAV, EShaderStage_Pixel);
 			}
 		}
 
@@ -708,15 +716,19 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 			}
 			else
 			{
-				const CLightVolumeBuffer& lightVolumes   = m_graphicsPipeline.GetLightVolumeBuffer();
-				resources.SetBuffer(
-					EReservedTextureSlot_LightvolumeInfos,
-					const_cast<CGpuBuffer*>(&lightVolumes.GetLightInfosBuffer()),
-					EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
-				resources.SetBuffer(
-					EReservedTextureSlot_LightVolumeRanges,
-					const_cast<CGpuBuffer*>(&lightVolumes.GetLightRangesBuffer()),
-					EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+				CTiledLightVolumesStage* pLightVolumeStage = m_graphicsPipeline.GetStage<CTiledLightVolumesStage>();
+				if (pLightVolumeStage)
+				{
+					const CLightVolumeBuffer& lightVolumes = pLightVolumeStage->GetLightVolumeBuffer();
+					resources.SetBuffer(
+						EReservedTextureSlot_LightvolumeInfos,
+						const_cast<CGpuBuffer*>(&lightVolumes.GetLightInfosBuffer()),
+						EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+					resources.SetBuffer(
+						EReservedTextureSlot_LightVolumeRanges,
+						const_cast<CGpuBuffer*>(&lightVolumes.GetLightRangesBuffer()),
+						EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+				}
 			}
 		}
 
@@ -765,8 +777,10 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 #endif
 
 			resources.SetTexture(23, pShadowMapStage->m_pTexRT_ShadowPool, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
-			resources.SetTexture(24, CRendererResources::s_ptexSceneNormalsBent, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
-			resources.SetTexture(41, CRendererResources::s_ptexSceneDiffuse, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);  //  Eye AO overlay
+			resources.SetTexture(24, m_graphicsPipelineResources.m_pTexSceneNormalsBent, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+
+			resources.SetTexture(48, CRendererResources::s_ptexLTC1, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+			resources.SetTexture(49, CRendererResources::s_ptexLTC2, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 
 			// Overwrite resources for transparent pass (need to be careful that the layout is still the same)
 			if (includeForwardShadowResources)
@@ -783,7 +797,7 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 					CShadowUtils::GetShadowCascades(cascades, RenderView());
 				}
 
-				resources.SetTexture(25, CRendererResources::s_ptexSceneTarget, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+				resources.SetTexture(25, m_graphicsPipelineResources.m_pTexSceneTarget, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 				resources.SetTexture(26, cascades.pShadowMap[0], EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 				resources.SetTexture(27, cascades.pShadowMap[1], EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 				resources.SetTexture(28, cascades.pShadowMap[2], EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
@@ -807,10 +821,15 @@ bool CSceneForwardStage::PreparePerPassResources(bool bOnInit, bool bShadowMask,
 					resources.SetTexture(44, pVolFogStage->GetGlobalEnvProbeTex1(), EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 				}
 			}
-			if (includeEyeOverlayPassResources)
+
+			// Eye AO overlay pass resource-set must not contain eye AO overlay texture (bound as render-target).
+			if (bOnInit || !includeEyeOverlayPassResources)
 			{
-				// Eye AO overlay pass resource must not contain eye AO overlay texture.
 				resources.SetTexture(41, CRendererResources::s_ptexBlack, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
+			}
+			else
+			{
+				resources.SetTexture(41, m_graphicsPipelineResources.m_pTexClipVolumes, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);  //  Eye AO overlay
 			}
 		}
 
@@ -857,11 +876,24 @@ void CSceneForwardStage::ExecuteOpaque()
 	CRenderView* pRenderView = RenderView();
 	auto& renderItemDrawer = pRenderView->GetDrawer();
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
 	m_forwardEyeOverlayPass.PrepareRenderPassForUse(commandList);
+
+	{
+		renderItemDrawer.InitDrawSubmission();
+
+		m_forwardEyeOverlayPass.BeginExecution(m_graphicsPipeline);
+		m_forwardEyeOverlayPass.SetupDrawContext(StageID, ePass_ForwardPrepassed, TTYPE_GENERAL, FB_GENERAL);
+		m_forwardEyeOverlayPass.DrawRenderItems(pRenderView, EFSLIST_EYE_OVERLAY);
+		m_forwardEyeOverlayPass.EndExecution();
+
+		renderItemDrawer.JobifyDrawSubmission();
+		renderItemDrawer.WaitForDrawSubmission();
+	}
+
 	m_forwardOpaquePass.PrepareRenderPassForUse(commandList);
 	m_forwardOverlayPass.PrepareRenderPassForUse(commandList);
 
@@ -882,11 +914,6 @@ void CSceneForwardStage::ExecuteOpaque()
 
 	{
 		renderItemDrawer.InitDrawSubmission();
-
-		m_forwardEyeOverlayPass.BeginExecution(m_graphicsPipeline);
-		m_forwardEyeOverlayPass.SetupDrawContext(StageID, ePass_Forward, TTYPE_GENERAL, FB_GENERAL);
-		m_forwardEyeOverlayPass.DrawRenderItems(pRenderView, EFSLIST_EYE_OVERLAY);
-		m_forwardEyeOverlayPass.EndExecution();
 
 		m_forwardOpaquePass.BeginExecution(m_graphicsPipeline);
 		m_forwardOpaquePass.SetupDrawContext(StageID, ePass_Forward, TTYPE_GENERAL, FB_GENERAL | FB_TILED_FORWARD, FB_ZPREPASS);
@@ -933,7 +960,7 @@ void CSceneForwardStage::ExecuteTransparent(bool bBelowWater)
 
 	CSceneRenderPass& scenePass = bBelowWater ? m_forwardTransparentBWPass : m_forwardTransparentAWPass;
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
@@ -974,11 +1001,11 @@ void CSceneForwardStage::ExecuteTransparentDepthFixup()
 	FUNCTION_PROFILER_RENDERER();
 	PROFILE_LABEL_SCOPE("MERGE_DEPTH");
 
-	CTexture* pSrcRT  = CRendererResources::s_ptexHDRTarget;
-	CTexture* pDestRT = CRendererResources::s_ptexLinearDepth;
+	CTexture* pSrcRT  = m_graphicsPipelineResources.m_pTexHDRTarget;
+	CTexture* pDestRT = m_graphicsPipelineResources.m_pTexLinearDepth;
 
 	if (!CRendererCVars::CV_r_HDRTexFormat)
-		pSrcRT = CRendererResources::s_ptexLinearDepthFixup;
+		pSrcRT = m_graphicsPipelineResources.m_pTexLinearDepthFixup;
 
 	CFullscreenPass& screenPass = m_depthFixupPass;
 	if (!screenPass.IsDirty())
@@ -1012,9 +1039,9 @@ void CSceneForwardStage::ExecuteTransparentLoRes(int subRes)
 
 	PROFILE_LABEL_SCOPE("FORWARD_TRANSPARENT_SUBRES");
 
-	CTexture* pSourceDS = CRendererResources::s_ptexLinearDepthScaled[subRes];
-	CTexture* pTargetDS = CRendererResources::s_ptexSceneDepthScaled[subRes];
-	CTexture* pTargetRT = CRendererResources::s_ptexHDRTargetScaled[subRes][0];
+	CTexture* pSourceDS = m_graphicsPipelineResources.m_pTexLinearDepthScaled[subRes];
+	CTexture* pTargetDS = m_graphicsPipelineResources.m_pTexSceneDepthScaled[subRes];
+	CTexture* pTargetRT = m_graphicsPipelineResources.m_pTexHDRTargetScaled[subRes][0];
 
 	CClearSurfacePass::Execute(pTargetRT, Clr_Empty);
 
@@ -1039,7 +1066,7 @@ void CSceneForwardStage::ExecuteTransparentLoRes(int subRes)
 	scenePass.ExchangeRenderTarget(0, pTargetRT);
 	scenePass.ExchangeDepthTarget(pTargetDS);
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
@@ -1057,10 +1084,10 @@ void CSceneForwardStage::ExecuteTransparentLoRes(int subRes)
 	renderItemDrawer.WaitForDrawSubmission();
 
 	m_depthUpscalePass.Execute(
-		CRendererResources::s_ptexLinearDepth, // TODO: Scaled[subRes - 1]
+		m_graphicsPipelineResources.m_pTexLinearDepth, // TODO: Scaled[subRes - 1]
 		pTargetRT,
 		pSourceDS,
-		CRendererResources::s_ptexHDRTarget, // TODO: Scaled[subRes - 1]
+		m_graphicsPipelineResources.m_pTexHDRTarget, // TODO: Scaled[subRes - 1]
 		CRendererCVars::CV_r_ParticlesHalfResBlendMode == 0
 		);
 }
@@ -1077,9 +1104,9 @@ void CSceneForwardStage::ExecuteAfterPostProcessHDR()
 
 	CSceneRenderPass& scenePass = m_forwardHDRPass;
 	// TODO: CPostEffectContext::GetDstBackBufferTexture() pre-EnableAltBackBuffer()
-	scenePass.ExchangeRenderTarget(0, CRendererResources::s_ptexDisplayTargetDst);
+	scenePass.ExchangeRenderTarget(0, m_graphicsPipelineResources.m_pTexDisplayTargetDst);
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
@@ -1111,7 +1138,7 @@ void CSceneForwardStage::ExecuteAfterPostProcessLDR()
 	// TODO: CPostEffectContext::GetDstBackBufferTexture() post-EnableAltBackBuffer()
 	scenePass.ExchangeRenderTarget(0, RenderView()->GetRenderOutput()->GetColorTarget());
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
@@ -1136,7 +1163,7 @@ void CSceneForwardStage::ExecuteMobile()
 	CRenderView* pRenderView = RenderView();
 	auto& renderItemDrawer = pRenderView->GetDrawer();
 
-	PreparePerPassResources(false);
+	UpdatePerPassResources(false);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 
@@ -1201,7 +1228,7 @@ void CSceneForwardStage::ExecuteMinimum(CTexture* pColorTex, CTexture* pDepthTex
 
 	const bool bShadowMask = false;
 	const bool bFog = RenderView()->IsGlobalFogEnabled();
-	PreparePerPassResources(false, bShadowMask, bFog);
+	UpdatePerPassResources(false, bShadowMask, bFog);
 
 	auto& RESTRICT_REFERENCE commandList = GetDeviceObjectFactory().GetCoreCommandList();
 

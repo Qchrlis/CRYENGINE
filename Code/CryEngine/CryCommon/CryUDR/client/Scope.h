@@ -62,7 +62,7 @@ namespace Cry
 
 		protected:
 
-			explicit                        CScopeBase();
+			CScopeBase() {}
 			~CScopeBase();
 
 			void                            PushNode(INode& node);
@@ -88,7 +88,6 @@ namespace Cry
 
 		private:
 
-			INode*                          m_pNode;
 			CDebugElementsAdapter           m_adapter;
 			CRecursiveSyncObjectAutoLock    m_lock;
 		};
@@ -180,33 +179,27 @@ namespace Cry
 			m_pNode->GetLogMessageCollection().LogWarning("%s", text.c_str());
 		}
 
-		inline CScopeBase::CScopeBase()
-			: m_pNode(nullptr)
-		{}
-
 		inline CScopeBase::~CScopeBase()
 		{
-			CRY_ASSERT(m_pNode);
-			gEnv->pUDR->GetHub().GetNodeStack().PopNode();
+			CRY_ASSERT(m_adapter.m_pNode);
+			gEnv->pUDR->GetNodeStack().PopNode();
 		}
 
 		inline void CScopeBase::PushNode(INode& node)
 		{
-			CRY_ASSERT(!m_pNode);
 			CRY_ASSERT(!m_adapter.m_pNode);
-			m_pNode = m_adapter.m_pNode = &node;
-			gEnv->pUDR->GetHub().GetNodeStack().PushNode(node);
+			m_adapter.m_pNode = &node;
+			gEnv->pUDR->GetNodeStack().PushNode(node);
 		}
 
 		inline const char* CScopeBase::GetName() const
 		{
-			CRY_ASSERT(m_pNode);
-			return m_pNode->GetName();
+			CRY_ASSERT(m_adapter.m_pNode);
+			return m_adapter.m_pNode->GetName();
 		}
 
 		inline const CScopeBase::CDebugElementsAdapter* CScopeBase::operator->() const
 		{
-			CRY_ASSERT(m_pNode);
 			CRY_ASSERT(m_adapter.m_pNode);
 			return &m_adapter;
 		}
@@ -228,7 +221,7 @@ namespace Cry
 
 		inline CScope_FixedString::CScope_FixedString(const char* szNodeName)
 		{
-			PushNode(gEnv->pUDR->GetHub().GetNodeStack().GetTopNode().AddChild_FixedStringIfNotYetExisting(szNodeName));
+			PushNode(gEnv->pUDR->GetNodeStack().GetTopNode().AddChild_FixedStringIfNotYetExisting(szNodeName));
 		}
 
 		//===================================================================================
@@ -249,7 +242,7 @@ namespace Cry
 
 		inline CScope_UniqueStringAutoIncrement::CScope_UniqueStringAutoIncrement(const char* szNodeNamePrefix)
 		{
-			PushNode(gEnv->pUDR->GetHub().GetNodeStack().GetTopNode().AddChild_UniqueStringAutoIncrement(szNodeNamePrefix));
+			PushNode(gEnv->pUDR->GetNodeStack().GetTopNode().AddChild_UniqueStringAutoIncrement(szNodeNamePrefix));
 		}
 
 		//===================================================================================
@@ -269,7 +262,7 @@ namespace Cry
 
 		inline CScope_UseLastAutoIncrementedUniqueString::CScope_UseLastAutoIncrementedUniqueString(const char* szNodeNamePrefix)
 		{
-			PushNode(gEnv->pUDR->GetHub().GetNodeStack().GetTopNode().AddChild_FindLastAutoIncrementedUniqueNameOrCreateIfNotYetExisting(szNodeNamePrefix));
+			PushNode(gEnv->pUDR->GetNodeStack().GetTopNode().AddChild_FindLastAutoIncrementedUniqueNameOrCreateIfNotYetExisting(szNodeNamePrefix));
 		}
 
 		//===================================================================================
@@ -289,7 +282,7 @@ namespace Cry
 
 		inline CScope_CurrentSystemFrame::CScope_CurrentSystemFrame()
 		{
-			PushNode(gEnv->pUDR->GetHub().GetNodeStack().GetTopNode().AddChild_CurrentSystemFrame());
+			PushNode(gEnv->pUDR->GetNodeStack().GetTopNode().AddChild_CurrentSystemFrame());
 		}
 
 	}

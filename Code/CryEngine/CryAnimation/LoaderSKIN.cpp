@@ -56,7 +56,7 @@ bool CryCHRLoader::BeginLoadSkinRenderMesh(CSkin* pSkin, int nRenderLod, EStream
 {
 	using namespace CryCHRLoader_LoadNewSKIN_Helpers;
 
-	LOADING_TIME_PROFILE_SECTION(g_pISystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(g_pISystem);
 
 	static_assert(sizeof(TFace) == 6, "Invalid type size!");
 
@@ -447,7 +447,7 @@ bool CSkin::LoadNewSKIN(const char* szFilePath, uint32 nLoadingFlags)
 
 	using namespace SkinLoader_Helpers;
 
-	LOADING_TIME_PROFILE_SECTION(g_pISystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(g_pISystem);
 
 	static_assert(sizeof(TFace) == 6, "Invalid type size!");
 
@@ -487,7 +487,14 @@ bool CSkin::LoadNewSKIN(const char* szFilePath, uint32 nLoadingFlags)
 
 		const bool lodExists = gEnv->pCryPak->IsFileExist(lodName);
 		if (!lodExists)
-			continue; //continue until we find the first valid LOD
+		{
+			if (lodCount == 0)
+				continue; //continue until we find the first valid LOD
+
+			// Some lower LODs are loaded, but higher LOD is not available.
+			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, szFilePath, "CryAnimation (%s): Failed to load SKIN (File doesn't exist) '%s'", __FUNCTION__, lodName.c_str());
+			return 0;
+		}
 
 		CContentCGF* pChunkFile = g_pI3DEngine->CreateChunkfileContent(lodName);
 

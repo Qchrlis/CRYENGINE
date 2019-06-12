@@ -26,13 +26,16 @@ public:
 
 	virtual const char* GetEditorName() const override { return "Substance Instance Editor"; }
 
+	virtual void        OnInitialize();
 	virtual bool        OnOpenAsset(CAsset* pAsset) override;
 	virtual bool        OnSaveAsset(CEditableAsset& editAsset) override;
 	virtual void        OnCloseAsset() override;
 
 protected:
-	void PushPresetToRender();
-	void SetPreviewResolution();
+	virtual bool IsDockingSystemEnabled() const override { return false; }
+	void         PushPresetToRender();
+	void         SetPreviewResolution();
+
 protected slots:
 	void OnEditOutputs();
 	void OnOutputEditorAccepted();

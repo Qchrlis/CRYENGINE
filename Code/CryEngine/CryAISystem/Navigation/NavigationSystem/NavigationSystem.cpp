@@ -1062,6 +1062,23 @@ NavigationMeshID NavigationSystem::GetMeshID(const char* name, NavigationAgentTy
 	return NavigationMeshID();
 }
 
+DynArray<NavigationMeshID> NavigationSystem::GetMeshIDsForAgentType(const NavigationAgentTypeID agentTypeID) const
+{
+	CRY_ASSERT(agentTypeID.IsValid() && (agentTypeID <= m_agentTypes.size()));
+
+	DynArray<NavigationMeshID> allMeshIDs;
+
+	if (agentTypeID.IsValid() && (agentTypeID <= m_agentTypes.size()))
+	{
+		const AgentType& agentType = m_agentTypes[agentTypeID - 1];
+		for (const AgentType::MeshInfo& meshInfo : agentType.meshes)
+		{
+			allMeshIDs.push_back(meshInfo.id);
+		}
+	}
+	return allMeshIDs;
+}
+
 const char* NavigationSystem::GetMeshName(NavigationMeshID meshID) const
 {
 	if (meshID && m_meshes.validate(meshID))
@@ -1171,7 +1188,7 @@ void NavigationSystem::UpdateInternalNavigationSystemData(const bool blocking)
 	{
 		lastFrameStartTime = m_frameStartTime;
 
-		UpdateMeshes(m_frameStartTime, m_frameDeltaTime, blocking, gAIEnv.CVars.NavigationSystemMT != 0, false);
+		UpdateMeshes(m_frameStartTime, m_frameDeltaTime, blocking, gAIEnv.CVars.navigation.NavigationSystemMT != 0, false);
 	}
 #endif
 
@@ -1254,7 +1271,7 @@ void NavigationSystem::UpdateMeshes(const CTimeValue frameStartTime, const float
 	{
 		if (!m_runningTasks.empty())
 		{
-			CRY_PROFILE_REGION(PROFILE_AI, "Navigation System::UpdateMeshes() - Running Task Processing");
+			CRY_PROFILE_SECTION(PROFILE_AI, "Navigation System::UpdateMeshes() - Running Task Processing");
 
 			RunningTasks::iterator it = m_runningTasks.begin();
 			RunningTasks::iterator end = m_runningTasks.end();
@@ -1274,7 +1291,7 @@ void NavigationSystem::UpdateMeshes(const CTimeValue frameStartTime, const float
 				CommitTile(result);
 
 				{
-					CRY_PROFILE_REGION_WAITING(PROFILE_AI, "Navigation System::UpdateMeshes() - Running Task Processing - WaitForJob");
+					CRY_PROFILE_SECTION_WAITING(PROFILE_AI, "Navigation System::UpdateMeshes() - Running Task Processing - WaitForJob");
 					gEnv->GetJobManager()->WaitForJob(result.jobState);
 				}
 
@@ -1320,7 +1337,7 @@ void NavigationSystem::UpdateMeshes(const CTimeValue frameStartTime, const float
 		{
 			SetStateAndSendEvent(EWorkingState::Working);
 
-			CRY_PROFILE_REGION(PROFILE_AI, "Navigation System::UpdateMeshes() - Job Spawning");
+			CRY_PROFILE_SECTION(PROFILE_AI, "Navigation System::UpdateMeshes() - Job Spawning");
 			const size_t idealMinimumTaskCount = 2;
 			const size_t MaxRunningTaskCount = multiThreaded ? m_maxRunningTaskCount : std::min(m_maxRunningTaskCount, idealMinimumTaskCount);
 
@@ -1547,7 +1564,7 @@ bool NavigationSystem::SpawnJob(TileTaskResult& result, NavigationMeshID meshID,
 		GenerateTileJob(params, &result.state, &result.tile, &result.metaData, &result.hashValue);
 	}
 
-	if (gAIEnv.CVars.DebugDrawNavigation)
+	if (gAIEnv.CVars.navigation.DebugDrawNavigation)
 	{
 		if (gEnv->pRenderer)
 		{
@@ -1654,7 +1671,7 @@ void NavigationSystem::CommitTile(TileTaskResult& result)
 	{
 	case TileTaskResult::Completed:
 		{
-			CRY_PROFILE_REGION(PROFILE_AI, "Navigation System::CommitTile() - Running Task Processing - ConnectToNetwork");
+			CRY_PROFILE_SECTION(PROFILE_AI, "Navigation System::CommitTile() - Running Task Processing - ConnectToNetwork");
 
 			MNM::TileID tileID = mesh.navMesh.SetTile(result.x, result.y, result.z, result.tile);
 			mesh.navMesh.ConnectToNetwork(tileID, &result.metaData.connectivityData);
@@ -1672,7 +1689,7 @@ void NavigationSystem::CommitTile(TileTaskResult& result)
 		break;
 	case TileTaskResult::Failed:
 		{
-			CRY_PROFILE_REGION(PROFILE_AI, "Navigation System::CommitTile() - Running Task Processing - ClearTile");
+			CRY_PROFILE_SECTION(PROFILE_AI, "Navigation System::CommitTile() - Running Task Processing - ClearTile");
 
 			if (MNM::TileID tileID = mesh.navMesh.GetTileID(result.x, result.y, result.z))
 			{
@@ -1702,7 +1719,7 @@ void NavigationSystem::ProcessQueuedMeshUpdates()
 #if NAV_MESH_REGENERATION_ENABLED
 	do
 	{
-		UpdateMeshesFromEditor(false, gAIEnv.CVars.NavigationSystemMT != 0, false);
+		UpdateMeshesFromEditor(false, gAIEnv.CVars.navigation.NavigationSystemMT != 0, false);
 	}
 	while (m_state == EWorkingState::Working);
 #endif
@@ -2805,7 +2822,7 @@ void NavigationSystem::SetupTasks()
 	// will ever,ever,ever make that efficient.
 	// PeteB: Optimized the tile job time enough to make it viable to do more than one per frame. Added CVar
 	//        multiplier to allow people to control it based on the speed of their machine.
-	m_maxRunningTaskCount = (gEnv->pJobManager->GetNumWorkerThreads() * 3 / 4) * gAIEnv.CVars.NavGenThreadJobs;
+	m_maxRunningTaskCount = (gEnv->pJobManager->GetNumWorkerThreads() * 3 / 4) * gAIEnv.CVars.navigation.NavGenThreadJobs;
 	m_results.resize(m_maxRunningTaskCount);
 
 	for (uint16 i = 0; i < m_results.size(); ++i)
@@ -3912,7 +3929,7 @@ bool NavigationSystem::ReadFromFile(const char* fileName, bool bAfterExporting)
 			m_volumesManager.LoadData(file, nFileVersion);
 			m_updatesManager.LoadData(file, nFileVersion);
 
-			if (gAIEnv.CVars.MNMRemoveInaccessibleTrianglesOnLoad && !gEnv->IsEditor())
+			if (gAIEnv.CVars.navigation.MNMRemoveInaccessibleTrianglesOnLoad && !gEnv->IsEditor())
 			{
 				RemoveAllTrianglesByFlags(m_annotationsLibrary.GetInaccessibleAreaFlag().value);
 			}
@@ -5203,7 +5220,7 @@ void NavigationSystemDebugDraw::DebugDrawPathFinder(NavigationSystem& navigation
 		MNM::DangerousAreasList dangersInfo;
 		MNM::DangerAreaConstPtr info;
 		const Vec3& cameraPos = gAIEnv.GetDebugRenderer()->GetCameraPos(); // To simulate the player position and evaluate the path generation
-		info.reset(new MNM::DangerAreaT<MNM::eWCT_Direction>(cameraPos, 0.0f, gAIEnv.CVars.PathfinderDangerCostForAttentionTarget));
+		info.reset(new MNM::DangerAreaT<MNM::eWCT_Direction>(cameraPos, 0.0f, gAIEnv.CVars.pathfinder.PathfinderDangerCostForAttentionTarget));
 		dangersInfo.push_back(info);
 
 		// This object is used to simulate the explosive threat and debug draw the behavior of the pathfinding
@@ -5211,7 +5228,7 @@ void NavigationSystemDebugDraw::DebugDrawPathFinder(NavigationSystem& navigation
 		if (GetAISystem()->GetObjectDebugParamsFromName("MNMPathExplosiveThreat", debugObjectExplosiveThreat))
 		{
 			info.reset(new MNM::DangerAreaT<MNM::eWCT_Range>(debugObjectExplosiveThreat.objectPos,
-				gAIEnv.CVars.PathfinderExplosiveDangerRadius, gAIEnv.CVars.PathfinderDangerCostForExplosives));
+				gAIEnv.CVars.pathfinder.PathfinderExplosiveDangerRadius, gAIEnv.CVars.pathfinder.PathfinderDangerCostForExplosives));
 			dangersInfo.push_back(info);
 		}
 
@@ -5258,11 +5275,11 @@ void NavigationSystemDebugDraw::DebugDrawPathFinder(NavigationSystem& navigation
 				const Vec3 pathVerticalOffset = Vec3(.0f, .0f, .1f);
 				drawPath(renderAuxGeom, outputPath, Col_Gray, pathVerticalOffset);
 
-				const bool bBeautifyPath = (gAIEnv.CVars.BeautifyPath != 0);
+				const bool bBeautifyPath = (gAIEnv.CVars.pathfinder.BeautifyPath != 0);
 				CTimeValue stringPullingStartTime = gEnv->pTimer->GetAsyncTime();
 				if (bBeautifyPath)
 				{
-					outputPath.PullPathOnNavigationMesh(navMesh, gAIEnv.CVars.PathStringPullingIterations, nullptr);
+					outputPath.PullPathOnNavigationMesh(navMesh, gAIEnv.CVars.pathfinder.PathStringPullingIterations, nullptr);
 				}
 				stringPullingTotalTime = gEnv->pTimer->GetAsyncTime() - stringPullingStartTime;
 
@@ -5282,14 +5299,14 @@ void NavigationSystemDebugDraw::DebugDrawPathFinder(NavigationSystem& navigation
 		}
 	}
 
-	const stack_string predictionName = gAIEnv.CVars.MNMPathfinderPositionInTrianglePredictionType ? "Advanced prediction" : "Triangle Center";
+	const stack_string predictionName = gAIEnv.CVars.pathfinder.MNMPathfinderPositionInTrianglePredictionType ? "Advanced prediction" : "Triangle Center";
 
 	CDebugDrawContext dc;
 
 	dc->Draw2dLabel(10.0f, 172.0f, 1.3f, Col_White, false,
 		"Start: %08x  -  End: %08x - Total Pathfinding time: %.4fms -- Type of prediction for the point inside each triangle: %s", closestTriangleStart.id, closestTriangleEnd.id, timeTotal.GetMilliSeconds(), predictionName.c_str());
 	dc->Draw2dLabel(10.0f, 184.0f, 1.3f, Col_White, false,
-		"String pulling operation - Iteration %d  -  Total time: %.4fms -- Total Length: %f", gAIEnv.CVars.PathStringPullingIterations, stringPullingTotalTime.GetMilliSeconds(), totalPathLength);
+		"String pulling operation - Iteration %d  -  Total time: %.4fms -- Total Length: %f", gAIEnv.CVars.pathfinder.PathStringPullingIterations, stringPullingTotalTime.GetMilliSeconds(), totalPathLength);
 }
 
 static bool FindObjectToTestIslandConnectivity(const char* szName, Vec3& outPos, IEntity** ppOutEntityToTestOffGridLinks)
@@ -5399,7 +5416,7 @@ void NavigationSystemDebugDraw::DebugDrawNavigationMeshesForSelectedAgent(Naviga
 {
 	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const DefaultTriangleColorSelector colorSelector(navigationSystem, gAIEnv.CVars.MNMDebugDrawFlag, !!gAIEnv.CVars.MNMDebugAccessibility);
+	const DefaultTriangleColorSelector colorSelector(navigationSystem, gAIEnv.CVars.navigation.MNMDebugDrawFlag, !!gAIEnv.CVars.navigation.MNMDebugAccessibility);
 	
 	const AgentType& agentType = navigationSystem.m_agentTypes[m_agentTypeID - 1];
 	const CCamera& viewCamera = gEnv->pSystem->GetViewCamera();
@@ -5411,16 +5428,16 @@ void NavigationSystemDebugDraw::DebugDrawNavigationMeshesForSelectedAgent(Naviga
 		if(!viewCamera.IsAABBVisible_F(navigationSystem.m_volumes[mesh.boundary].aabb))
 			continue;
 
-		if (gAIEnv.CVars.MNMDebugDrawTileStates)
+		if (gAIEnv.CVars.navigation.MNMDebugDrawTileStates)
 		{
 			navigationSystem.m_updatesManager.DebugDrawMeshTilesState(meshInfo.id);
 		}
 
 		size_t drawFlag = MNM::STile::DrawTriangles | MNM::STile::DrawMeshBoundaries;
-		if (gAIEnv.CVars.MNMDebugAccessibility)
+		if (gAIEnv.CVars.navigation.MNMDebugAccessibility)
 			drawFlag |= MNM::STile::DrawAccessibility;
 
-		switch (gAIEnv.CVars.DebugDrawNavigation)
+		switch (gAIEnv.CVars.navigation.DebugDrawNavigation)
 		{
 		case 0:
 		case 1:
@@ -5484,7 +5501,7 @@ void NavigationSystemDebugDraw::DebugDrawMeshBorders(NavigationSystem& navigatio
 
 void NavigationSystemDebugDraw::DebugDrawTriangleOnCursor(NavigationSystem& navigationSystem)
 {
-	if (!gAIEnv.CVars.DebugTriangleOnCursor)
+	if (!gAIEnv.CVars.navigation.DebugTriangleOnCursor)
 		return;
 
 	const CCamera& viewCamera = gEnv->pSystem->GetViewCamera();
@@ -5608,7 +5625,7 @@ void NavigationSystemDebugDraw::DebugDrawNavigationSystemState(NavigationSystem&
 {
 	CDebugDrawContext dc;
 	
-	if (gAIEnv.CVars.DebugDrawNavigation)
+	if (gAIEnv.CVars.navigation.DebugDrawNavigation)
 	{
 		switch (navigationSystem.m_state)
 		{
@@ -5660,7 +5677,7 @@ void NavigationSystemDebugDraw::DebugDrawNavigationSystemState(NavigationSystem&
 
 void NavigationSystemDebugDraw::DebugDrawMemoryStats(NavigationSystem& navigationSystem)
 {
-	if (gAIEnv.CVars.MNMProfileMemory)
+	if (gAIEnv.CVars.navigation.MNMProfileMemory)
 	{
 		const float kbInvert = 1.0f / 1024.0f;
 
@@ -5985,7 +6002,7 @@ void NavigationSystemBackgroundUpdate::OnSystemEvent(ESystemEvent event, UINT_PT
 	else if (event == ESYSTEM_EVENT_CHANGE_FOCUS)
 	{
 		// wparam != 0 is focused, wparam == 0 is not focused
-		const bool startBackGroundUpdate = (wparam == 0) && (gAIEnv.CVars.MNMEditorBackgroundUpdate != 0) && (m_navigationSystem.GetState() == INavigationSystem::EWorkingState::Working) && !m_paused;
+		const bool startBackGroundUpdate = (wparam == 0) && (gAIEnv.CVars.navigation.MNMEditorBackgroundUpdate != 0) && (m_navigationSystem.GetState() == INavigationSystem::EWorkingState::Working) && !m_paused;
 
 		if (startBackGroundUpdate)
 		{

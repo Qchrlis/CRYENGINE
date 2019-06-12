@@ -28,7 +28,6 @@ CParticleEffect::CParticleEffect()
 	: m_editVersion(0)
 	, m_dirty(true)
 	, m_substitutedPfx1(false)
-	, m_numRenderObjects(0)
 {
 	m_pAttributes = TAttributeTablePtr(new CAttributeTable);
 }
@@ -45,8 +44,6 @@ void CParticleEffect::Compile()
 	if (!m_dirty)
 		return;
 
-	m_numRenderObjects = 0;
-	m_environFlags = 0;
 	for (auto& component : m_components)
 	{
 		component->m_pEffect = this;
@@ -58,37 +55,20 @@ void CParticleEffect::Compile()
 	Sort();
 
 	uint id = 0;
-	MainPreUpdate.clear();
-	RenderDeferred.clear();
 	for (auto& component : m_components)
 	{
 		component->m_componentId = id++;
 		if (!component->IsActive())
 			continue;
 		component->Compile();
-		if (component->MainPreUpdate.size())
-			MainPreUpdate.push_back(component);
-		if (component->RenderDeferred.size())
-			RenderDeferred.push_back(component);
 	}
 
 	m_topComponents.clear();
-	m_timings = {};
 	for (auto& component : m_components)
 	{
 		component->FinalizeCompile();
 		if (!component->GetParentComponent())
-		{
 			m_topComponents.push_back(component);
-			if (!component->IsActive())
-				continue;
-			component->UpdateTimings();
-			const STimingParams& timings = component->ComponentParams();
-			SetMax(m_timings.m_maxParticleLife, timings.m_maxParticleLife);
-			SetMax(m_timings.m_stableTime, timings.m_stableTime);
-			SetMax(m_timings.m_equilibriumTime, timings.m_equilibriumTime);
-			SetMax(m_timings.m_maxTotalLIfe, timings.m_maxTotalLIfe);
-		}
 	}
 
 	m_dirty = false;
@@ -161,16 +141,6 @@ string CParticleEffect::MakeUniqueName(const CParticleComponent* forComponent, c
 	while (FindComponentByName(newName));
 
 	return newName;
-}
-
-uint CParticleEffect::AddRenderObjectId()
-{
-	return m_numRenderObjects++;
-}
-
-uint CParticleEffect::GetNumRenderObjectIds() const
-{
-	return m_numRenderObjects;
 }
 
 string CParticleEffect::GetShortName() const

@@ -265,6 +265,10 @@ bool QToolWindowArea::eventFilter(QObject* pObject, QEvent* pEvent)
 				{
 					toolWindow = m_pTabFrame->contents();
 				}
+				if (!toolWindow)
+				{
+					return false;
+				}
 				m_tabDragCanStart = false;
 				//stop internal tab drag in QTabBar
 				QMouseEvent* releaseEvent = new QMouseEvent(QEvent::MouseButtonRelease, me->pos(), Qt::LeftButton, Qt::LeftButton, 0);
@@ -605,6 +609,7 @@ QToolWindowSingleTabAreaFrame::QToolWindowSingleTabAreaFrame(QToolWindowManager*
 	, m_pContents(nullptr)
 {
 	m_pLayout->setContentsMargins(0, 0, 0, 0);
+	m_pLayout->setMargin(0);
 	m_pLayout->setSpacing(0);
 
 	m_pCaption->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -637,8 +642,6 @@ void QToolWindowSingleTabAreaFrame::setContents(QWidget* widget)
 {
 	if (m_pContents)
 	{
-		QObject::disconnect(m_pContents, &QWidget::windowTitleChanged, this, &QWidget::setWindowTitle);
-		QObject::disconnect(m_pContents, &QWidget::windowIconChanged, this, &QWidget::setWindowIcon);
 		m_pLayout->removeWidget(m_pContents);
 	}
 	if (widget)

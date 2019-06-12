@@ -2,11 +2,9 @@
 
 #pragma once
 
-#if defined(CONSOLE_CONST_CVAR_MODE)
-	#define GetFloatCVar(name) name ## Default
-#else
-	#define GetFloatCVar(name) (Cry3DEngineBase::GetCVars())->name
-#endif
+#include <CrySystem/ConsoleRegistration.h>
+
+#define GetFloatCVar(name) (Cry3DEngineBase::GetCVars())->name
 
 // console variables
 struct CVars : public Cry3DEngineBase
@@ -406,6 +404,7 @@ struct CVars : public Cry3DEngineBase
 	int   e_ShadowsCacheMaxNodesPerFrame;
 	int   e_ShadowsCacheObjectLod;
 	int   e_ShadowsCacheRenderCharacters;
+	int   e_ShadowsCacheJobs;
 	int   e_ShadowsPerObject;
 	int   e_DynamicDistanceShadows;
 	float e_ShadowsPerObjectResolutionScale;
@@ -429,7 +428,7 @@ struct CVars : public Cry3DEngineBase
 	float e_ShadowsCastViewDistRatioLights;
 	int   e_ShadowsUpdateViewDistRatio;
 	int   e_Lods;
-	DeclareConstIntCVar(e_LodFaceArea, 1);
+	int   e_LodFaceArea;
 	float e_ShadowsConstBias;
 	int   e_ParticlesCollisions;
 	int   e_ParticlesObjectCollisions;
@@ -448,6 +447,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstFloatCVar(e_LodCompMaxSize);
 	float e_ViewDistRatioDetail;
 	DeclareConstIntCVar(e_TerrainDetailMaterialsDebug, 0);
+	DeclareConstIntCVar(e_Sleep, 0);
 	DeclareConstIntCVar(e_TerrainOcclusionCullingStepSize, 4);
 	int   e_Wind;
 	int   e_SQTestMip;

@@ -62,7 +62,7 @@ void CParticleSubBuffer::Release()
 {
 	Unlock(0);
 	m_buffer.Release();
-	if (m_handle)
+	if (m_handle && gRenDev)
 		gRenDev->m_DevBufMan.Destroy(m_handle);
 	m_handle = 0;
 	m_flags = 0;
@@ -185,7 +185,7 @@ void CParticleBufferSet::Release()
 	m_subBufferAxes.Release();
 	m_subBufferColors.Release();
 
-	if (m_spriteIndexBufferHandle)
+	if (m_spriteIndexBufferHandle && gRenDev)
 		gRenDev->m_DevBufMan.Destroy(m_spriteIndexBufferHandle);
 	m_spriteIndexBufferHandle = 0;
 
@@ -243,9 +243,12 @@ void CParticleBufferSet::WaitForFence(int frameId)
 {
 #if BUFFER_ENABLE_DIRECT_ACCESS == 1
 	assert(m_valid);
+	float time0 = iTimer->GetAsyncCurTime();
 
 	const uint cvId = frameId % CREParticle::numBuffers;
 	GetDeviceObjectFactory().SyncFence(m_fences[cvId], true, false);
+
+	SRenderStatistics::Write().m_Summary.waitForGPU_MT += iTimer->GetAsyncCurTime() - time0;
 #endif
 }
 

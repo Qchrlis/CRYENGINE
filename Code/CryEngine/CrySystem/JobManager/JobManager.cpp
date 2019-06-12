@@ -534,9 +534,11 @@ void JobManager::CJobManager::AddJob(JobManager::CJobDelegator& crJob, const Job
 	{
 		Invoker delegator = crJob.GetGenericDelegator();
 		const void* pParamMem = crJob.GetJobParamData();
-
-		// execute job function
-		(*delegator)((void*)pParamMem);
+		{
+			MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Job: %s", cJobHandle->cpString);
+			// execute job function
+			(*delegator)((void*)pParamMem);
+		}
 
 		IF(infoBlock.GetJobState(), 1)
 		{
@@ -591,10 +593,7 @@ bool JobManager::CJobManager::InvokeAsJob(const JobManager::TJobHandle cJobHandl
 
 bool JobManager::CJobManager::InvokeAsJob(const char* cpJobName) const
 {
-#if defined(_RELEASE)
-	return true; // no support for fallback interface in release
-#endif
-
+#if !defined(_RELEASE) // job filtering is only supported in non-release builds
 	// try to find the jobname in the job filter list
 	IF (m_pJobFilter, 0)
 	{
@@ -606,6 +605,7 @@ bool JobManager::CJobManager::InvokeAsJob(const char* cpJobName) const
 					return false;
 			}
 	}
+#endif
 
 	return m_nJobSystemEnabled != 0;
 }

@@ -60,12 +60,6 @@ CBrush::~CBrush()
 	if (m_pDeform)
 		delete m_pDeform;
 
-	if (m_pCameraSpacePos)
-	{
-		delete m_pCameraSpacePos;
-		m_pCameraSpacePos = nullptr;
-	}
-
 	GetInstCount(GetRenderNodeType())--;
 }
 
@@ -124,7 +118,7 @@ void CBrush::Render(const struct SRendParams& _EntDrawParams, const SRenderingPa
 
 	DBG_LOCK_TO_THREAD(this);
 
-	if (!m_pStatObj || m_dwRndFlags & ERF_HIDDEN)
+	if (!m_pStatObj)
 		return; //false;
 
 	if (m_dwRndFlags & ERF_COLLISION_PROXY || m_dwRndFlags & ERF_RAYCAST_PROXY)
@@ -391,8 +385,19 @@ void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 	}
 
 	Matrix34 mtxScale;
-	mtxScale.SetScale(Vec3(fScaleX, fScaleY, fScaleZ));
+	Matrix33 mtxNoScale = Matrix33(m_Matrix) * Diag33(fScaleX, fScaleY, fScaleZ).invert();
 	params.pMtx3x4 = &mtxScale;
+	pe_params_pos par_pos;
+	par_pos.pos = m_Matrix.GetTranslation();
+	if (mtxNoScale.IsOrthonormalRH())
+	{	// if scale is cleanly separatable into pre-scale, apply scale to geometry and rotation+translation to the entity
+		mtxScale.SetScale(Vec3(fScaleX, fScaleY, fScaleZ));
+		par_pos.q = Quat(mtxNoScale);
+	}	
+	else
+	{	// otherwise apply merged rotation+scale to geometry and traslantion to the entity
+		mtxScale = Matrix33(m_Matrix);
+	}
 	m_pStatObj->Physicalize(m_pPhysEnt, &params);
 
 	{ // Update foreign data flags based on render flags
@@ -413,9 +418,6 @@ void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 	par_flags.flagsOR = pef_never_affect_triggers | pef_log_state_changes;
 	m_pPhysEnt->SetParams(&par_flags);
 
-	pe_params_pos par_pos;
-	par_pos.pos = m_Matrix.GetTranslation();
-	par_pos.q = Quat(Matrix33(m_Matrix) * Diag33(fScaleX, fScaleY, fScaleZ).invert());
 	par_pos.bEntGridUseOBB = 1;
 	m_pPhysEnt->SetParams(&par_pos);
 
@@ -743,19 +745,14 @@ void CBrush::OffsetPosition(const Vec3& delta)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CBrush::SetCameraSpacePos(Vec3* pCameraSpacePos)
+void CBrush::SetCameraSpaceParams(stl::optional<SCameraSpaceParams> cameraSpaceParams)
 {
-	if (pCameraSpacePos)
-	{
-		if (!m_pCameraSpacePos)
-			m_pCameraSpacePos = new Vec3;
-		*m_pCameraSpacePos = *pCameraSpacePos;
-	}
-	else
-	{
-		delete m_pCameraSpacePos;
-		m_pCameraSpacePos = nullptr;
-	}
+	m_cameraSpaceParams = cameraSpaceParams;
+}
+
+stl::optional<SCameraSpaceParams> CBrush::GetCameraSpaceParams() const
+{
+	return m_cameraSpaceParams;
 }
 
 void CBrush::SetSubObjectHideMask(hidemask subObjHideMask)
@@ -803,7 +800,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 				return;
 	}
 
-	if (!m_pStatObj || m_dwRndFlags & ERF_HIDDEN)
+	if (!m_pStatObj)
 		return;
 
 	/*
@@ -857,7 +854,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	}
 
 	CRenderObject* pObj = nullptr;
-	if (m_pFoliage || m_pDeform || (m_dwRndFlags & ERF_HUD) || isNearestObject)
+	if (m_pFoliage || m_pDeform || (m_dwRndFlags & (ERF_HUD | ERF_MOVES_EVERY_FRAME)) || isNearestObject)
 	{
 		// Foliage and deform do not support permanent render objects
 		// HUD is managed in custom render-lists and also doesn't support it
@@ -907,7 +904,8 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND  ) ? FOB_ALLOW_TERRAIN_LAYER_BLEND   : FOB_NONE;
 	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_DECAL_BLEND          ) ? FOB_ALLOW_DECAL_BLEND           : FOB_NONE;
 
-	if (m_dwRndFlags & ERF_NO_DECALNODE_DECALS && !(gEnv->nMainFrameID - m_lastMoveFrameId < 3))
+	if ((m_dwRndFlags & (ERF_NO_DECALNODE_DECALS | ERF_MOVES_EVERY_FRAME)) ||
+		(gEnv->nMainFrameID - m_lastMoveFrameId < 3))
 	{
 		pObj->m_ObjFlags |= FOB_DYNAMIC_OBJECT;
 	}
@@ -929,7 +927,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	if (!passInfo.IsShadowPass() && m_nInternalFlags & IRenderNode::REQUIRES_NEAREST_CUBEMAP)
 	{
 		if (!(pObj->m_nTextureID = GetObjManager()->CheckCachedNearestCubeProbe(this)) || !GetCVars()->e_CacheNearestCubePicking)
-			pObj->m_nTextureID = GetObjManager()->GetNearestCubeProbe(pAffectingLights, m_pOcNode->GetVisArea(), CBrush::GetBBox());
+			pObj->m_nTextureID = GetObjManager()->GetNearestCubeProbe(pAffectingLights, GetEntityVisArea(), CBrush::GetBBox());
 
 		pTempData->userData.nCubeMapId = pObj->m_nTextureID;
 	}
@@ -937,8 +935,8 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	//////////////////////////////////////////////////////////////////////////
 	// temp fix to update ambient color (Vlad please review!)
 	pObj->m_nClipVolumeStencilRef = userData.m_pClipVolume ? userData.m_pClipVolume->GetStencilRef() : 0;
-	if (m_pOcNode && m_pOcNode->GetVisArea())
-		pObj->SetAmbientColor(m_pOcNode->GetVisArea()->GetFinalAmbientColor(), passInfo);
+	if (auto pVisArea = GetEntityVisArea())
+		pObj->SetAmbientColor(pVisArea->GetFinalAmbientColor(), passInfo);
 	else
 		pObj->SetAmbientColor(Get3DEngine()->GetSkyColor(), passInfo);
 	//////////////////////////////////////////////////////////////////////////
@@ -1040,6 +1038,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 		}
 
 		pObj->m_data.m_nHUDSilhouetteParams = m_nHUDSilhouettesParam;
+		pObj->m_data.m_uniqueObjectId = reinterpret_cast<uintptr_t>(this);
 
 		m_pStatObj->RenderInternal(pObj, m_nSubObjHideMask, lodValue, passInfo);
 	}
@@ -1065,17 +1064,22 @@ void CBrush::OnRenderNodeBecomeVisibleAsync(SRenderNodeTempData* pTempData, cons
 	float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
 
 	userData.nWantedLod = CObjManager::GetObjectLOD(this, fEntDistance);
+
+	if (GetOwnerEntity() && (GetRndFlags() & ERF_ENABLE_ENTITY_RENDER_CALLBACK))
+	{
+		GetOwnerEntity()->OnRenderNodeVisibilityChange(true);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CBrush::CalcNearestTransform(Matrix34& transformMatrix, const SRenderingPassInfo& passInfo)
 {
 	// Camera space
-	if (m_pCameraSpacePos)
+	if (m_cameraSpaceParams)
 	{
 		// Use camera space relative position
 		const Matrix33 cameraRotation = Matrix33(passInfo.GetCamera().GetViewMatrix());
-		transformMatrix.SetTranslation(*m_pCameraSpacePos * cameraRotation);
+		transformMatrix.SetTranslation((m_cameraSpaceParams->cameraSpacePosition * cameraRotation) + m_cameraSpaceParams->worldSpaceOffset);
 	}
 	else
 	{

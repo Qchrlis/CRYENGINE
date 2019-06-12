@@ -45,10 +45,7 @@ public:
 	CParticleEditor();
 
 	// CEditor
-	virtual void        Initialize() override;
 	virtual const char* GetEditorName() const override { return "Particle Editor"; }
-	virtual void        SetLayout(const QVariantMap& state) override;
-	virtual QVariantMap GetLayout() const override;
 	// ~CEditor
 
 	// IEditorNotifyListener
@@ -60,17 +57,13 @@ public:
 protected:
 	// CAssetEditor
 	virtual bool                                  OnOpenAsset(CAsset* pAsset) override;
-	virtual bool                                  OnSaveAsset(CEditableAsset& editAsset) override;
 	virtual void                                  OnDiscardAssetChanges(CEditableAsset& editAsset) override;
 	virtual bool                                  OnAboutToCloseAsset(string& reason) const override;
 	virtual void                                  OnCloseAsset() override;
 	virtual std::unique_ptr<IAssetEditingSession> CreateEditingSession() override;
-	virtual bool                                  AllowsInstantEditing() const override { return true; }
+	virtual void                                  OnCreateDefaultLayout(CDockableContainer* pSender, QWidget* pAssetBrowser) override;
+	virtual void                                  OnInitialize() override;
 	// ~CAssetEditor
-
-	// CEditor
-	virtual void CreateDefaultLayout(CDockableContainer* pSender) override;
-	// ~CEditor
 
 	void AssignToEntity(CBaseObject* pObject, const string& newAssetName);
 	bool AssetSaveDialog(string* pOutputName);
@@ -78,16 +71,17 @@ protected:
 	void OnShowEffectOptions();
 
 private:
+	void         RegisterActions();
 	void         InitMenu();
-	void         RegisterDockingWidgets();
 
-	// CEditor
 	bool OnReload();
 	bool OnImport();
 
-	virtual bool OnUndo() override;
-	virtual bool OnRedo() override;
-	// ~CEditor
+	bool OnCopy() { return false; }
+	bool OnPaste() { return false; }
+	bool OnDelete() { return false; }
+	bool OnUndo();
+	bool OnRedo();
 
 protected Q_SLOTS:
 	void OnLoadFromSelectedEntity();

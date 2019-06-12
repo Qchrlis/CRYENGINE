@@ -63,8 +63,6 @@ public:
 	CCrySignal<void()>                             signalAssetClosed;
 
 	CCrySignal<void()>                             signalNewVariableSelected;
-	CCrySignal<void()>                             signalCurveIsDragging;
-	CCrySignal<void(QWidget* pSender)>             signalSelectedVariableChanged;
 	CCrySignal<void()>                             signalVariableTreeChanged;
 	CCrySignal<void()>                             signalCurveContentChanged;
 
@@ -74,7 +72,7 @@ public:
 
 private:
 	virtual void OnEditorNotifyEvent(EEditorNotifyEvent event) override;
-	void         RebuildVariableTreeFromPreset();
+	void         RebuildVariableTreeFromPreset(bool newPreset = false);
 	void         RebuildCurveContentFromPreset();
 	void         ApplyVariableChangeToPreset(int paramId, SCurveEditorContent& content);
 

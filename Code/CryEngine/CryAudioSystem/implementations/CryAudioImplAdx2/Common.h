@@ -13,16 +13,12 @@ namespace Impl
 namespace Adx2
 {
 class CImpl;
-class CBaseObject;
-class CGlobalObject;
-class CListener;
+class CObject;
 class CCueInstance;
 
 extern CImpl* g_pImpl;
-extern CGlobalObject* g_pObject;
-extern CListener* g_pListener;
 
-using Objects = std::vector<CBaseObject*>;
+using Objects = std::vector<CObject*>;
 extern Objects g_constructedObjects;
 
 using AcbHandles = std::map<uint32, CriAtomExAcbHn>;
@@ -34,6 +30,10 @@ extern CriAtomEx3dSourceConfig g_3dSourceConfig;
 extern uint32 g_numObjectsWithDoppler;
 
 constexpr CriChar8 const* g_szAbsoluteVelocityAisacName = "absolute_velocity";
+constexpr CriChar8 const* g_szOcclusionAisacName = "occlusion";
+
+extern CriAtomExAisacControlId g_absoluteVelocityAisacId;
+extern CriAtomExAisacControlId g_occlusionAisacId;
 
 using CueInstances = std::vector<CCueInstance*>;
 

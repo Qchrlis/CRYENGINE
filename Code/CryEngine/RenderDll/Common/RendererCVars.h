@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include "Renderer.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 	#define SUPPORTS_INPLACE_TEXTURE_STREAMING
@@ -182,6 +183,12 @@ public:
 
 	static int CV_r_BreakOnError;
 
+	static int CV_r_PipelineResourceDiscardAfterFrame;
+
+#if CRY_PLATFORM_DURANGO
+	static int CV_r_TexturesStagingRingEnabled;
+	static int CV_r_TexturesStagingRingSize;
+#endif
 	static int CV_r_TexturesStreamPoolSize; //plz do not access directly, always by GetTexturesStreamPoolSize()
 	static int CV_r_texturesstreampooldefragmentation;
 	static int CV_r_texturesstreampooldefragmentationmaxmoves;
@@ -234,14 +241,10 @@ public:
 	DeclareStaticConstIntCVar(CV_r_deferredshadingLightVolumes, 1);
 	DeclareStaticConstIntCVar(CV_r_deferredDecals, 1);
 	DeclareStaticConstIntCVar(CV_r_deferredDecalsDebug, 0);
-	DeclareStaticConstIntCVar(CV_r_DeferredShadingScissor, 1);
 	DeclareStaticConstIntCVar(CV_r_DeferredShadingDebugGBuffer, 0);
 	DeclareStaticConstIntCVar(CV_r_DeferredShadingEnvProbes, 1);
-	static int CV_r_DeferredShadingAmbient;
 	DeclareStaticConstIntCVar(CV_r_DeferredShadingAmbientLights, 1);
 	DeclareStaticConstIntCVar(CV_r_DeferredShadingLights, 1);
-	DeclareStaticConstIntCVar(CV_r_DeferredShadingAreaLights, 0);
-	DeclareStaticConstIntCVar(CV_r_DeferredShadingStencilPrepass, 1);
 	static int CV_r_HDRSwapChain;
 	DeclareStaticConstIntCVar(CV_r_HDRDebug, 0);
 	static int CV_r_HDRBloom;
@@ -269,7 +272,6 @@ public:
 	static int   CV_r_ShadowsScreenSpace;
 	static float CV_r_ShadowsScreenSpaceLength;
 	DeclareStaticConstIntCVar(CV_r_debuglights, 0);
-	DeclareStaticConstIntCVar(CV_r_DeferredShadingDepthBoundsTest, DEF_SHAD_DBT_DEFAULT_VAL);
 	static int CV_r_sunshafts;
 	DeclareStaticConstIntCVar(CV_r_SonarVision, 1);
 	DeclareStaticConstIntCVar(CV_r_ThermalVision, 1);
@@ -297,7 +299,6 @@ public:
 	DeclareStaticConstIntCVar(CV_r_showtimegraph, 0);
 	DeclareStaticConstIntCVar(CV_r_DebugFontRendering, 0);
 	DeclareStaticConstIntCVar(CV_profileStreaming, 0);
-	DeclareStaticConstIntCVar(CV_r_showbufferusage, 0);
 	DeclareStaticConstIntCVar(CV_r_profileshaders, 0);
 	DeclareStaticConstIntCVar(CV_r_ProfileShadersSmooth, 4);
 	DeclareStaticConstIntCVar(CV_r_ProfileShadersGroupByName, 1);
@@ -483,6 +484,10 @@ public:
 	static float CV_r_PostProcessHUD3DGlowAmount;
 	static float CV_r_normalslength;
 	static float CV_r_TexelsPerMeter;
+	static float CV_r_OverdrawComplexity;
+	static float CV_r_OverdrawComplexityBluePoint;
+	static float CV_r_OverdrawComplexitySmoothness;
+	static float CV_r_OverdrawComplexityCompression;
 	static float CV_r_TexturesStreamingMaxRequestedMB;
 	static int   CV_r_TexturesStreamingMaxRequestedJobs;
 	static float CV_r_TexturesStreamingMipBias;

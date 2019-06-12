@@ -896,7 +896,6 @@ void CDeviceCopyCommandInterfaceImpl::CopyBuffer(CBufferResource* pSrc, CBufferR
 #if !_RELEASE
 	const uint32_t srcSize = pSrc->GetStride() * pSrc->GetElementCount();
 	const uint32_t dstSize = pDst->GetStride() * pDst->GetElementCount();
-	VK_ASSERT(pSrc->GetStride() == pDst->GetStride(), "Buffer element sizes must be compatible"); // Not actually a Vk requirement, but likely a bug
 	VK_ASSERT(mapping.Extent.Width > 0, "Invalid extents");
 	VK_ASSERT(mapping.SourceOffset.Left + mapping.Extent.Width <= srcSize, "Source region too large");
 	VK_ASSERT(mapping.DestinationOffset.Left + mapping.Extent.Width <= dstSize, "Destination region too large");
@@ -930,17 +929,19 @@ void CDeviceCopyCommandInterfaceImpl::CopyImage(CImageResource* pSrc, CImageReso
 	const uint32_t srcLastMip = (mapping.SourceOffset.Subresource + mapping.Extent.Subresources - 1) % srcMips;
 	const uint32_t srcLastSlice = (mapping.SourceOffset.Subresource + mapping.Extent.Subresources - 1) / srcMips;
 	const uint32_t numSlices = srcLastSlice - srcFirstSlice + 1;
+
+	const uint32_t dstMips = pDst->GetMipCount();
+	const uint32_t dstFirstMip = mapping.DestinationOffset.Subresource % dstMips;
+	const uint32_t dstFirstSlice = mapping.DestinationOffset.Subresource / dstMips;
+
 #if !_RELEASE
 	const uint32_t numMips = srcLastMip - srcFirstMip + 1;
 	VK_ASSERT(mapping.Extent.Width * mapping.Extent.Height * mapping.Extent.Depth * mapping.Extent.Subresources > 0, "Invalid extents");
 	VK_ASSERT(numMips * numSlices == mapping.Extent.Subresources, "Partial copies that cross slice must start at mip 0, and request whole mip chains");
 	VK_ASSERT(srcFirstMip + numMips <= srcMips && srcFirstSlice + numSlices <= pSrc->GetSliceCount(), "Source subresource out of bounds");
-#endif
-	const uint32_t dstMips = pDst->GetMipCount();
-	const uint32_t dstFirstMip = mapping.DestinationOffset.Subresource % dstMips;
-	const uint32_t dstFirstSlice = mapping.DestinationOffset.Subresource / dstMips;
 	VK_ASSERT(dstFirstMip + numMips <= dstMips && dstFirstSlice + numSlices <= pDst->GetSliceCount(), "Destination subresource out of bounds");
-
+#endif
+	
 	const VkImageAspectFlags srcAspects = GetCopyableAspects(pSrc);
 
 	uint32_t mipIndex = 0;
@@ -991,6 +992,8 @@ void CDeviceCopyCommandInterfaceImpl::CopyImage(CImageResource* pSrc, CImageReso
 		dstWidth *= srcBlockWidth;
 		dstHeight *= srcBlockHeight;
 	}
+	const uint32_t kBatchSize = 16;
+
 #if !_RELEASE
 	VK_ASSERT(srcX % (srcBlockWidth << (numMips - 1)) == 0, "Source offset X not aligned for block-mip access");
 	VK_ASSERT(srcY % (srcBlockHeight << (numMips - 1)) == 0, "Source offset Y not aligned for block-mip access");
@@ -1009,10 +1012,9 @@ void CDeviceCopyCommandInterfaceImpl::CopyImage(CImageResource* pSrc, CImageReso
 	const uint32_t dstMipDepth = std::max(pDst->GetDepth() >> dstFirstMip, 1U);
 	VK_ASSERT(srcX + srcWidth <= srcMipWidth && srcY + srcHeight <= srcMipHeight && srcZ + srcDepth <= srcMipDepth, "Source region too large");
 	VK_ASSERT(dstX + dstWidth <= dstMipWidth && dstY + dstHeight <= dstMipHeight && dstZ + dstDepth <= dstMipDepth, "Destination region too large");
-#endif
-	const uint32_t kBatchSize = 16;
-	VkImageCopy batch[kBatchSize];
 	VK_ASSERT(numMips <= kBatchSize, "Cannot copy more than 16 mips at a time");
+#endif
+	VkImageCopy batch[kBatchSize];
 	for (uint32_t srcMip = srcFirstMip; srcMip <= srcLastMip; ++srcMip, ++mipIndex)
 	{
 		batch[mipIndex].srcSubresource.aspectMask = srcAspects;
@@ -1098,54 +1100,50 @@ bool CDeviceCopyCommandInterfaceImpl::FillBuffer(const void* pSrc, CBufferResour
 	return pMapped != nullptr;
 }
 
-CBufferResource* CDeviceCopyCommandInterfaceImpl::UploadBuffer(const void* pSrc, CBufferResource* pDst, const SResourceMemoryMapping& mapping, bool bAllowGpu)
+CBufferResource* CDeviceCopyCommandInterfaceImpl::PrepareStagingBuffer(const void* pSrc, NCryVulkan::CBufferResource* pDst, SResourceMemoryMapping mapping)
+{
+	const uint32_t srcBytes  = mapping.MemoryLayout.volumeStride;
+	const uint32_t dstOffset = mapping.ResourceOffset.Left;
+	VK_ASSERT(mapping.MemoryLayout.rowStride == mapping.MemoryLayout.volumeStride, "Invalid source memory layout"); // Fill uses volumeStride since it also fills images.
+	VK_ASSERT(mapping.ResourceOffset.Subresource == 0, "Buffer array slices not yet supported");
+	VK_ASSERT(srcBytes % pDst->GetStride() == 0 && dstOffset % pDst->GetStride() == 0, "source data length and destination offset must be divisble by their buffer strides.");
+	VK_ASSERT(!pDst->GetFlag(kResourceFlagCpuWritable), "Distention must have cpu writable flag.");
+
+	// When we are not updating at the start of the buffer, we need to adjust the fill parameters,
+	// since the staging buffer is not necessarily the same size as the destination buffer.
+	mapping.ResourceOffset.Left = 0;
+	
+	CBufferResource* pResult = nullptr;
+	if (GetDevice()->CreateOrReuseStagingResource(pDst, srcBytes, &pResult, true) != VK_SUCCESS)
+	{
+		VK_ASSERT(false, "Upload buffer skipped: Cannot create staging buffer");
+		return nullptr;
+	}
+
+	if (!FillBuffer(pSrc, pResult, mapping))
+	{
+		VK_ASSERT(false, "Unable to fill staging buffer");
+		SAFE_RELEASE(pResult);
+	}
+
+	return pResult;
+}
+
+void CDeviceCopyCommandInterfaceImpl::UploadBuffer(const void* pSrc, CBufferResource* pDst, const SResourceMemoryMapping& mapping)
 {
 	const uint32_t srcBytes = mapping.MemoryLayout.volumeStride;
 	const uint32_t dstOffset = mapping.ResourceOffset.Left;
 	VK_ASSERT(mapping.MemoryLayout.rowStride == mapping.MemoryLayout.volumeStride, "Invalid source memory layout"); // Fill uses volumeStride since it also fills images.
 	VK_ASSERT(mapping.ResourceOffset.Subresource == 0, "Buffer array slices not yet supported");
+	VK_ASSERT(srcBytes % pDst->GetStride() == 0 && dstOffset % pDst->GetStride() == 0, "source data length and destination offset must be divisble by their buffer strides.");
 
 	const bool bIsUsedByGpu = false; // TODO: Implement this
-
-	CBufferResource* pStaging = pDst;
-	const SResourceMemoryMapping* pMapping = &mapping;
-	SResourceMemoryMapping tempMapping;
-
-	const bool bStage = !pDst->GetFlag(kResourceFlagCpuWritable) || bIsUsedByGpu;
-	if (bStage)
-	{
-		// When we are not updating at the start of the buffer, we need to adjust the fill parameters,
-		// since the staging buffer is not necessarily the same size as the destination buffer.
-		if (mapping.ResourceOffset.Left != 0)
-		{
-			tempMapping = mapping;
-			tempMapping.ResourceOffset.Left = 0;
-			pMapping = &tempMapping;
-		}
-
-		if (GetDevice()->CreateOrReuseStagingResource(pDst, srcBytes, &pStaging, true) != VK_SUCCESS)
-		{
-			VK_ASSERT(false, "Upload buffer skipped: Cannot create staging buffer");
-			return nullptr;
-		}
-	}
-
-	const bool bFilled = FillBuffer(pSrc, pStaging, *pMapping);
-	VK_ASSERT(bFilled, "Unable to fill staging buffer");
+	const bool bStage       = !pDst->GetFlag(kResourceFlagCpuWritable) || bIsUsedByGpu;
 
 	if (bStage)
 	{
-		if (bFilled)
+		if (CBufferResource* pStaging = PrepareStagingBuffer(pSrc, pDst, mapping))
 		{
-			if (!bAllowGpu)
-			{
-				// We would need to use the GPU to perform the upload, however the caller chose not to allow this.
-				// Instead hand-off the staging buffer containing the data to the caller to handle in some other way.
-				VK_ASSERT(srcBytes % pDst->GetStride() == 0 && dstOffset % pDst->GetStride() == 0, "");
-				pStaging->SetStrideAndElementCount(pDst->GetStride(), srcBytes / pDst->GetStride());
-				return pStaging;
-			}
-
 			RequestTransition(pStaging, VK_ACCESS_TRANSFER_READ_BIT);
 			RequestTransition(pDst, VK_ACCESS_TRANSFER_WRITE_BIT);
 			GetVKCommandList()->PendingResourceBarriers();
@@ -1156,12 +1154,16 @@ CBufferResource* CDeviceCopyCommandInterfaceImpl::UploadBuffer(const void* pSrc,
 			info.size = srcBytes;
 			vkCmdCopyBuffer(GetVKCommandList()->GetVkCommandList(), pStaging->GetHandle(), pDst->GetHandle(), 1, &info);
 			GetVKCommandList()->m_nCommands += CLCOUNT_COPY;
+
+			pStaging->Release();
 		}
-
-		pStaging->Release(); // trigger ReleaseLater with kResourceFlagReusable
 	}
+	else
+	{
 
-	return nullptr;
+		const bool bFilled = FillBuffer(pSrc, pDst, mapping);
+		VK_ASSERT(bFilled, "Unable to fill staging buffer");
+	}
 }
 
 void CDeviceCopyCommandInterfaceImpl::UploadImage(const void* pSrc, CImageResource* pDst, const SResourceMemoryMapping& mapping, bool bExt)
@@ -1267,14 +1269,14 @@ void CDeviceCopyCommandInterfaceImpl::DownloadImage(NCryVulkan::CImageResource* 
 	const uint32_t numMips = srcLastMip - srcFirstMip + 1;
 	VK_ASSERT((bExt || numMips * numSlices == mapping.Extent.Subresources), "Partial copies that cross slice must start at mip 0, and request whole mip chains");
 	VK_ASSERT(srcFirstMip + numMips <= srcMips && srcFirstSlice + numSlices <= pSrc->GetSliceCount(), "Destination subresource out of bounds");
-#endif
-	uint32_t blockWidth = 1, blockHeight = 1, blockBytes = mapping.MemoryLayout.typeStride;
-	GetBlockSize(pSrc->GetFormat(), blockWidth, blockHeight, blockBytes);
 
 	// This is a limitation of high-level, may eventually change.
 	// When it does, we need to loop over the mips and fill one struct per iteration.
 	// However, we can still batch to one vkCmdCopyImageToBuffer
 	VK_ASSERT(numMips == 1, "Only 1 mip at a time expected");
+#endif
+	uint32_t blockWidth = 1, blockHeight = 1, blockBytes = mapping.MemoryLayout.typeStride;
+	GetBlockSize(pSrc->GetFormat(), blockWidth, blockHeight, blockBytes);
 
 	VkBufferImageCopy batch;
 	batch.bufferOffset = 0;

@@ -630,6 +630,7 @@ void CTrackViewSequenceTabWidget::OpenSequenceTab(const CryGUID sequenceGUID)
 	pCurveEditor->SetTimeRange(sequenceData.m_startTime, sequenceData.m_endTime);
 	pCurveEditor->SetTime(pSequence->GetTime());
 	pCurveEditor->SetGridVisible(true);
+	pCurveEditor->SetFitMargin(0.0f);
 	pCurveEditor->SetKeySnapping(GetTrackViewCore()->GetCurrentSnapMode() == eSnapMode_KeySnapping);
 	pCurveEditor->SetTimeSnapping(GetTrackViewCore()->GetCurrentSnapMode() == eSnapMode_TimeSnapping);
 	
@@ -662,6 +663,8 @@ void CTrackViewSequenceTabWidget::OpenSequenceTab(const CryGUID sequenceGUID)
 
 	UpdateActiveSequence();
 	UpdatePlaybackRangeMarkers();
+
+	EnableTimelineLink(!m_timelineLink);
 }
 
 void CTrackViewSequenceTabWidget::OnAddNodeButtonClicked()
@@ -2034,15 +2037,15 @@ void CTrackViewSequenceTabWidget::UpdateTrackViewTrack(CTrackViewTrack* pTrack)
 
 				if (handle.IsValid())
 				{
-					// TODO: this is a very wrong logic
-					if (!iter->added)
+					// TODO: This is a very wrong logic.
+					_smart_ptr<IAnimKeyWrapper> pWrappedKey = GetWrappedKeyFromElement(*pDopeSheetTrack, *iter);
+					if (pWrappedKey)
 					{
-						_smart_ptr<IAnimKeyWrapper> pWrappedKey = GetWrappedKeyFromElement(*pDopeSheetTrack, *iter);
-						if (pWrappedKey)
+						if (!iter->added)
 						{
 							pWrappedKey->SetTime(handle.GetTime());
-							handle.SetKey(pWrappedKey->Key());
 						}
+						handle.SetKey(pWrappedKey->Key());
 					}
 					// ~TODO
 

@@ -68,6 +68,7 @@ AllocateConstIntCVar(CRendererCVars, CV_r_logVidMem);
 AllocateConstIntCVar(CRendererCVars, CV_r_useESRAM);
 int CRendererCVars::CV_r_DeferredShadingSortLights;
 
+int CRendererCVars::CV_r_PipelineResourceDiscardAfterFrame;
 int CRendererCVars::CV_r_BreakOnError;
 int CRendererCVars::CV_r_durango_async_dips;
 int CRendererCVars::CV_r_durango_async_dips_sync;
@@ -122,6 +123,10 @@ float CRendererCVars::CV_r_rain_maxviewdist;
 float CRendererCVars::CV_r_rain_maxviewdist_deferred;
 float CRendererCVars::CV_r_measureoverdrawscale;
 AllocateConstIntCVar(CRendererCVars, CV_r_texturesstreamingmipfading);
+#if CRY_PLATFORM_DURANGO
+int CRendererCVars::CV_r_TexturesStagingRingEnabled;
+int CRendererCVars::CV_r_TexturesStagingRingSize;
+#endif
 int CRendererCVars::CV_r_TexturesStreamPoolSize;
 int CRendererCVars::CV_r_texturesstreampooldefragmentation;
 int CRendererCVars::CV_r_texturesstreampooldefragmentationmaxmoves;
@@ -170,15 +175,10 @@ AllocateConstIntCVar(CRendererCVars, CV_r_deferredshadingLightVolumes);
 AllocateConstIntCVar(CRendererCVars, CV_r_deferredDecals);
 AllocateConstIntCVar(CRendererCVars, CV_r_deferredDecalsDebug);
 
-AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingScissor);
-AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingDepthBoundsTest);
 AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingDebugGBuffer);
-int CRendererCVars::CV_r_DeferredShadingAmbient;
 AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingEnvProbes);
 AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingAmbientLights);
 AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingLights);
-AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingAreaLights);
-AllocateConstIntCVar(CRendererCVars, CV_r_DeferredShadingStencilPrepass);
 AllocateConstIntCVar(CRendererCVars, CV_r_CBufferUseNativeDepth);
 
 float CRendererCVars::CV_r_DeferredShadingLightLodRatio;
@@ -439,7 +439,6 @@ AllocateConstIntCVar(CRendererCVars, CV_r_showtangents);
 AllocateConstIntCVar(CRendererCVars, CV_r_showtimegraph);
 AllocateConstIntCVar(CRendererCVars, CV_r_DebugFontRendering);
 AllocateConstIntCVar(CRendererCVars, CV_profileStreaming);
-AllocateConstIntCVar(CRendererCVars, CV_r_showbufferusage);
 
 ICVar* CRendererCVars::CV_r_ShaderCompilerServer;
 ICVar* CRendererCVars::CV_r_ShaderCompilerFolderName;
@@ -528,6 +527,10 @@ float CRendererCVars::CV_r_ZFightingDepthScale;
 float CRendererCVars::CV_r_ZFightingExtrude;
 
 float CRendererCVars::CV_r_TexelsPerMeter;
+float CRendererCVars::CV_r_OverdrawComplexity;
+float CRendererCVars::CV_r_OverdrawComplexityBluePoint;
+float CRendererCVars::CV_r_OverdrawComplexitySmoothness;
+float CRendererCVars::CV_r_OverdrawComplexityCompression;
 
 int CRendererCVars::CV_r_enableAltTab;
 int CRendererCVars::CV_r_StereoFlipEyes;
@@ -1091,22 +1094,6 @@ void CRendererCVars::InitCVars()
 	                    "Usage: r_DeferredShadingEnvProbes [0/1]\n"
 	                    "Default is 1 (enabled)");
 
-	DefineConstIntCVar3("r_DeferredShadingStencilPrepass", CV_r_DeferredShadingStencilPrepass, 1, VF_DUMPTODISK,
-	                    "Toggles deferred shading stencil pre pass.\n"
-	                    "Usage: r_DeferredShadingStencilPrepass [0/1]\n"
-	                    "Default is 1 (enabled)");
-
-	DefineConstIntCVar3("r_DeferredShadingScissor", CV_r_DeferredShadingScissor, 1, VF_DUMPTODISK,
-	                    "Toggles deferred shading scissor test.\n"
-	                    "Usage: r_DeferredShadingScissor [0/1]\n"
-	                    "Default is 1 (enabled)");
-
-	DefineConstIntCVar3("r_DeferredShadingDepthBoundsTest", CV_r_DeferredShadingDepthBoundsTest, DEF_SHAD_DBT_DEFAULT_VAL,
-	                    VF_DUMPTODISK,
-	                    "Toggles deferred shading depth bounds test.\n"
-	                    "Usage: r_DeferredShadingDepthBoundsTest [0/1]\n"
-	                    "Default is 1 (enabled)");
-
 	DefineConstIntCVar3("r_DebugGBuffer", CV_r_DeferredShadingDebugGBuffer, 0, VF_NULL,
 	                    "Debug view for gbuffer attributes\n"
 	                    "  0 - Disabled\n"
@@ -1130,18 +1117,6 @@ void CRendererCVars::InitCVars()
 	                    "Enables/Disables ambient lights.\n"
 	                    "Usage: r_DeferredShadingAmbientLights [0/1]\n"
 	                    "Default is 1 (enabled)");
-
-	DefineConstIntCVar3("r_DeferredShadingAreaLights", CV_r_DeferredShadingAreaLights, 0, VF_DUMPTODISK,
-	                    "Enables/Disables more complex area lights processing.\n"
-	                    "Usage: r_DeferredShadingAreaLights [0/1]\n"
-	                    "Default is 0 (disabled)");
-
-	REGISTER_CVAR3("r_DeferredShadingAmbient", CV_r_DeferredShadingAmbient, 1, VF_DUMPTODISK,
-	               "Enables/Disables ambient processing.\n"
-	               "Usage: r_DeferredShadingAmbient [0/1/2]\n"
-	               "  0: no ambient passes (disabled)\n"
-	               "  1: vis areas and outdoor ambient  (default)\n"
-	               "  2: only outdoor (debug vis areas mode)\n");
 
 	REGISTER_CVAR3("r_DeferredShadingLightStencilRatio", CV_r_DeferredShadingLightStencilRatio, 0.21f, VF_DUMPTODISK,
 	               "Sets screen ratio for deferred lights to use stencil (eg: 0.2 - 20% of screen).\n"
@@ -2075,6 +2050,14 @@ void CRendererCVars::InitCVars()
 	               "Size of pool for render targets in MB.\n"
 	               "Default is 50(MB).");
 
+#if CRY_PLATFORM_DURANGO
+	REGISTER_CVAR3("r_TexturesStagingRingEnabled", CV_r_TexturesStagingRingEnabled, 0, VF_REQUIRE_APP_RESTART,
+		"Enable the durango texture staging ringbuffer, disabled by default\n");
+	int nDefaultTexStagingRingSize = 128;
+	REGISTER_CVAR3("r_TexturesStagingRingSize", CV_r_TexturesStagingRingSize, nDefaultTexStagingRingSize, VF_REQUIRE_APP_RESTART,
+		"Size of the durango texture staging ring buffer in MB.\n");
+#endif
+
 	int nDefaultDefragState = 0;
 	int nDefaultTexPoolSize = 1024;
 
@@ -2288,10 +2271,6 @@ void CRendererCVars::InitCVars()
 	                    "Usage: profileStreaming [0/1/2]\n"
 	                    "	1: Graph displayed as points."
 	                    "	2: Graph displayed as lines."
-	                    "Default is 0 (off).");
-	DefineConstIntCVar3("r_ShowBufferUsage", CV_r_showbufferusage, 0, VF_NULL,
-	                    "Shows usage of statically allocated buffers.\n"
-	                    "Usage: r_ShowBufferUSage [0/1]\n"
 	                    "Default is 0 (off).");
 	REGISTER_CVAR3_CB("r_LogVBuffers", CV_r_logVBuffers, 0, VF_CHEAT | VF_CONST_CVAR,
 	                  "Logs vertex buffers in memory to 'LogVBuffers.txt'.\n"
@@ -2759,6 +2738,10 @@ void CRendererCVars::InitCVars()
 	REGISTER_CVAR3("r_ShowVideoMemoryStats", CV_r_ShowVideoMemoryStats, 0, VF_NULL, "");
 	REGISTER_COMMAND("r_ShowRenderTarget", &Cmd_ShowRenderTarget, VF_CHEAT, CDebugRenderTargetsStage::showRenderTargetHelp);
 
+	REGISTER_CVAR3("r_PipelineResourceDiscardAfterFrame", CV_r_PipelineResourceDiscardAfterFrame, 0, VF_NULL,
+	               "0=Off,\n"
+                   "1=Allow for CharacterToolPipeline only,\n"
+	               "2=Allow for all graphics pipelines");
 	REGISTER_CVAR3("r_BreakOnError", CV_r_BreakOnError, 0, VF_NULL, "calls debugbreak on illegal behaviour");
 	REGISTER_CVAR3("r_durango_async_dips", CV_r_durango_async_dips, 0, VF_NULL, "enables async dip submission on durango");
 	REGISTER_CVAR3("r_durango_async_dips_sync", CV_r_durango_async_dips_sync, 9999, VF_CHEAT, "enables async dip submission sync on durango");
@@ -2772,7 +2755,7 @@ void CRendererCVars::InitCVars()
 	               "Usage: r_D3D12SubmissionThread [0-15]");
 	REGISTER_CVAR3("r_D3D12WaitableSwapChain", CV_r_D3D12WaitableSwapChain, 0, VF_REQUIRE_APP_RESTART | VF_CHEAT,
 	               "Enables highest performance in windowed mode (does not allow switching to fullscreen).");
-	REGISTER_CVAR3("r_D3D12BatchResourceBarriers", CV_r_D3D12BatchResourceBarriers, 1, VF_NULL,
+	REGISTER_CVAR3("r_D3D12BatchResourceBarriers", CV_r_D3D12BatchResourceBarriers, 2, VF_NULL,
 	               "Enables batching of resource barriers.\n"
 	               "0=Off,\n"
 	               "1=On,\n"
@@ -2832,6 +2815,29 @@ void CRendererCVars::InitCVars()
 	REGISTER_CVAR3("r_ZFightingDepthScale", CV_r_ZFightingDepthScale, 0.995f, VF_CHEAT, "Controls anti z-fighting measures in shaders (scaling homogeneous z).");
 	REGISTER_CVAR3("r_ZFightingExtrude", CV_r_ZFightingExtrude, 0.001f, VF_CHEAT, "Controls anti z-fighting measures in shaders (extrusion along normal in world units).");
 
+	REGISTER_CVAR3("r_OverdrawComplexity", CV_r_OverdrawComplexity, 0, VF_RENDERER_CVAR,
+	               "Enables visualization of depth- and quad-overdraw complexity.\n"
+	               "Making the mode negative results in all evaluations taking ZPrePass into account."
+	               "Usage: r_OverdrawComplexity [0/1/2/3/4]\n"
+	               "0: no overdraw shown (default)\n"
+	               "1: overdraw without any culling\n"
+	               "2: overdraw with depth culling (z-test)\n"
+	               "3: rejection rate with depth culling (z-test)\n"
+	               "4: overdraw without any culling, including quad-overdraw (dead lanes)\n"
+	               "5: overdraw with depth culling (z-test), including quad-overdraw (dead lanes)\n"
+	               "6: rejection rate with depth culling (z-test), including quad-overdraw (dead lanes)\n");
+
+	REGISTER_CVAR3("r_OverdrawComplexityBluePoint", CV_r_OverdrawComplexityBluePoint, 4.0f, 0,
+	               "Specifies which integer count is anchored at dark blue (2,25,147). Default is 4.\n"
+	               "Usage: r_OverdrawComplexityBluePoint [n]\n");
+	REGISTER_CVAR3("r_OverdrawComplexitySmoothness", CV_r_OverdrawComplexitySmoothness, 1.25f, 0,
+	               "Smoothness of the logarithmic mapping of the counts (the value is the log-base).\n"
+	               "Smaller values produce a steeper mapping than larger values.\n"
+	               "Usage: r_OverdrawComplexitySmoothness [n]\n");
+	REGISTER_CVAR3("r_OverdrawComplexityCompression", CV_r_OverdrawComplexityCompression, 1.0f, 0,
+	               "Amount of compression applied after logarithmic mapping (linear divisor).\n"
+	               "Usage: r_OverdrawComplexityCompression [n]\n");
+	
 	REGISTER_CVAR3("r_enableAltTab", CV_r_enableAltTab, 1, VF_NULL,
 	               "Toggles alt tabbing in and out of fullscreen when the game is not in devmode.\n"
 	               "Usage: r_enableAltTab [toggle]\n"

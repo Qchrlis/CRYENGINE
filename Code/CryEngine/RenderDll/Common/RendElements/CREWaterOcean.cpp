@@ -355,7 +355,7 @@ void CREWaterOcean::FrameUpdate()
 		const uint32 width = nGridSize;
 		const uint32 height = nGridSize;
 
-		CRY_PROFILE_REGION_WAITING(PROFILE_RENDERER, "update subresource");
+		CRY_PROFILE_SECTION_WAITING(PROFILE_RENDERER, "update subresource");
 
 		CDeviceTexture* pDevTex = pTexture->GetDevTexture();
 		pDevTex->UploadFromStagingResource(0, [=](void* pData, uint32 rowPitch, uint32 slicePitch)
@@ -396,6 +396,7 @@ bool CREWaterOcean::Compile(CRenderObject* pObj, uint64 objFlags, ERenderElement
 	auto& compiledObj = *(m_pCompiledObject);
 	compiledObj.m_bValid = 0;
 
+	auto threadID = gRenDev->GetRenderThreadID();
 	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
 	auto nThreadID = gRenDev->GetRenderThreadID();
 	CRY_ASSERT(rd->m_pRT->IsRenderThread());
@@ -438,7 +439,7 @@ bool CREWaterOcean::Compile(CRenderObject* pObj, uint64 objFlags, ERenderElement
 		FrameUpdate();
 	}
 
-	N3DEngineCommon::SOceanInfo& OceanInfo = gRenDev->m_p3DEngineCommon.m_OceanInfo;
+	N3DEngineCommon::SOceanInfo& OceanInfo = gRenDev->m_p3DEngineCommon[threadID].m_OceanInfo;
 	const bool bAboveWater = pRenderView->GetCamera(CCamera::eEye_Left).GetPosition().z > OceanInfo.m_fWaterLevel;
 	compiledObj.m_bAboveWater = bAboveWater ? 1 : 0;
 

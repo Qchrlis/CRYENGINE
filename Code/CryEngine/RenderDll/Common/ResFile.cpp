@@ -110,7 +110,7 @@ bool CResFile::mfActivate(bool bFirstTime)
 			}
 		}
 
-		LOADING_TIME_PROFILE_SECTION(iSystem);
+		CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
 		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 		int nFlags = !m_pLookupDataMan || m_pLookupDataMan->IsReadOnly() ? 0 : ICryPak::FLAGS_NEVER_IN_PAK | ICryPak::FLAGS_PATH_REAL | ICryPak::FOPEN_ONDISK;
@@ -123,10 +123,10 @@ bool CResFile::mfActivate(bool bFirstTime)
 				char szAcc[16];
 				cry_strcpy(szAcc, m_szAccess);
 				szAcc[0] = 'r';
-				m_handle = gEnv->pCryPak->FOpen(m_name.c_str(), szAcc, nFlags | ICryPak::FOPEN_HINT_DIRECT_OPERATION);
+				m_handle = gEnv->pCryPak->FOpen(m_name.c_str(), szAcc, nFlags);
 			}
 			else
-				m_handle = gEnv->pCryPak->FOpen(m_name.c_str(), m_szAccess, nFlags | ICryPak::FOPEN_HINT_DIRECT_OPERATION);
+				m_handle = gEnv->pCryPak->FOpen(m_name.c_str(), m_szAccess, nFlags);
 			if (!m_handle)
 			{
 				mfSetError("CResFile::Activate - Can't open resource file <%s>", m_name.c_str());

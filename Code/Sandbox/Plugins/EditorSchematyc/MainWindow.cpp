@@ -112,10 +112,9 @@ CMainWindow::CMainWindow()
 	pWindowLayout->setContentsMargins(0, 0, 0, 0);
 	SetContent(pWindowLayout);
 
+	RegisterActions();
 	InitMenu();
 	InitToolbar(pWindowLayout);
-
-	RegisterWidgets();
 
 	GetIEditor()->RegisterNotifyListener(this);
 }
@@ -228,7 +227,7 @@ bool CMainWindow::RestoreUndo(const XmlNodeRef& input)
 	return true;
 }
 
-void CMainWindow::CreateDefaultLayout(CDockableContainer* pSender)
+void CMainWindow::OnCreateDefaultLayout(CDockableContainer* pSender, QWidget* pAssetBrowser)
 {
 	CRY_ASSERT(pSender);
 
@@ -346,15 +345,23 @@ void CMainWindow::OnCloseAsset()
 	m_pAsset = nullptr;
 }
 
-void CMainWindow::RegisterWidgets()
+void CMainWindow::OnInitialize()
 {
-	EnableDockingSystem();
-
 	RegisterDockableWidget("Script Browser", [&]() { return CreateScriptBrowserWidget(); }, true, false);
 	RegisterDockableWidget("Graph View", [&]() { return CreateGraphViewWidget(); }, true, false);
 	RegisterDockableWidget("Preview", [&]() { return CreatePreviewWidget(); }, true, false);
 	RegisterDockableWidget("Log", [&]() { return CreateLogWidget(); }, true, false);
 	RegisterDockableWidget("Properties", [&]() { return CreateInspectorWidget(); }, true, false);
+}
+
+void CMainWindow::RegisterActions()
+{
+	RegisterAction("general.undo", &CMainWindow::OnUndo);
+	RegisterAction("general.redo", &CMainWindow::OnRedo);
+	RegisterAction("general.copy", &CMainWindow::OnCopy);
+	RegisterAction("general.cut", &CMainWindow::OnCut);
+	RegisterAction("general.paste", &CMainWindow::OnPaste);
+	RegisterAction("general.delete", &CMainWindow::OnDelete);
 }
 
 void CMainWindow::InitMenu()

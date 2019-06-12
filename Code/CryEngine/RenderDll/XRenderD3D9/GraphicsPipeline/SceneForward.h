@@ -33,14 +33,19 @@ public:
 	};
 
 public:
-	enum EPass
+	enum EPass : uint8
 	{
 		// limit: MAX_PIPELINE_SCENE_STAGE_PASSES
 		ePass_Forward          = 0,
 		ePass_ForwardPrepassed = 1,
 		ePass_ForwardRecursive = 2,
-		ePass_ForwardMobile    = 3
+		ePass_ForwardMobile    = 3,
+
+		ePass_Count
 	};
+
+	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES,
+		"The pipeline-state array is unable to carry as much pass-permutation as defined here!");
 
 public:
 	CSceneForwardStage(CGraphicsPipeline& graphicsPipeline);
@@ -70,7 +75,7 @@ public:
 	void FillCloudShadingParams(SCloudShadingParams& cloudParams, bool enable = true) const;
 
 private:
-	bool PreparePerPassResources(bool bOnInit, bool bShadowMask = true, bool bFog = true);
+	bool UpdatePerPassResources(bool bOnInit, bool bShadowMask = true, bool bFog = true);
 	void ExecuteTransparent(bool bBelowWater);
 
 private:

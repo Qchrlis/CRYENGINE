@@ -804,7 +804,7 @@ void C3DEngine::DebugDraw_UpdateDebugNode()
 
 void C3DEngine::RenderWorld(const int nRenderFlags, const SRenderingPassInfo& passInfo, const char* szDebugName)
 {
-	CRY_PROFILE_REGION(PROFILE_3DENGINE, "3DEngine: RenderWorld");
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "3DEngine: RenderWorld");
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "C3DEngine::RenderWorld");
 
 #if defined(FEATURE_SVO_GI)
@@ -1504,6 +1504,11 @@ const SSkyLightRenderParams* C3DEngine::GetSkyLightRenderParams() const
 	return m_pSkyLightManager ? m_pSkyLightManager->GetRenderParams() : NULL;
 }
 
+IMaterial* C3DEngine::GetSkyMaterial() const
+{
+	return m_pSkyMat[GetSkyType()];
+}
+
 void C3DEngine::SetSkyMaterial(IMaterial* pSkyMat, eSkyType type)
 {
 	m_pSkyMat[type] = pSkyMat;
@@ -1527,6 +1532,15 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	if (GetCVars()->e_CoverageBuffer)
 		GetObjManager()->CullQueue().Wait();
 #endif
+
+	////////////////////////////////////////////////////////////////////////////////////////
+	// Draw potential occluders into z-buffer
+	////////////////////////////////////////////////////////////////////////////////////////
+
+	if (GetCVars()->e_Sleep > 0)
+	{
+		CrySleep(GetCVars()->e_Sleep);
+	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Output debug data from last frame
@@ -1588,7 +1602,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 		const auto& auxStatObjs = passInfo.GetIRenderView()->GetAuxiliaryStatObjects();
 		if (auxStatObjs.size())
 		{
-			CRY_PROFILE_REGION(PROFILE_RENDERER, "auxiliaryStatObjects");
+			CRY_PROFILE_SECTION(PROFILE_RENDERER, "auxiliaryStatObjects");
 			for (auto& obj : auxStatObjs)
 				obj.second->Render(obj.first, passInfo);
 		}
@@ -1603,7 +1617,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 	if (passInfo.RenderShadows() && !passInfo.IsRecursivePass())
 	{
-		CRY_PROFILE_REGION(PROFILE_3DENGINE, "Prepare Shadow Passes");
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Prepare Shadow Passes");
 
 		// Collect shadow passes used in scene and allocate render view for each of them
 		uint32 nTimeSlicedShadowsUpdatedThisFrame = 0;
@@ -1615,10 +1629,13 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 		// store ptr to collected shadow passes into main view pass
 		const_cast<SRenderingPassInfo&>(passInfo).SetShadowPasses(&shadowPassInfo);
+
+		// Wait for shadow cache jobs to finish.
+		FinalizePrepareShadowPasses(passInfo, shadowFrustums, shadowPassInfo);
 	}
 	else
 	{
-		CRY_PROFILE_REGION(PROFILE_3DENGINE, "Traverse Outdoor Lights");
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Traverse Outdoor Lights");
 		uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
 
 		// render point lights
@@ -1629,7 +1646,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	// draw objects inside visible vis areas
 	if (m_pVisAreaManager)
 	{
-		CRY_PROFILE_REGION(PROFILE_3DENGINE, "Traverse Indoor Octrees");
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Traverse Indoor Octrees");
 		m_pVisAreaManager->DrawVisibleSectors(passInfo, passCullMask);
 	}
 
@@ -1638,8 +1655,8 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	////////////////////////////////////////////////////////////////////////////////////////
 	for (int t = 0; t < nThreadsNum; t++)
 	{
-		CThreadSafeRendererContainer<SVegetationSpriteInfo>& rList = m_pObjManager->m_arrVegetationSprites[passInfo.GetRecursiveLevel()][t];
-		rList.resize(0);
+		CryMT::CThreadSafePushContainer<SVegetationSpriteInfo>& rList = m_pObjManager->m_arrVegetationSprites[passInfo.GetRecursiveLevel()][t];
+		rList.clear();
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
@@ -1664,7 +1681,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 		if (IsSkyVisible())
 		{
-			UpdateSky(passInfo);
+			ProcessSky(passInfo);
 		}
 
 		// start processing terrain
@@ -1677,9 +1694,9 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 		passInfo.GetRendItemSorter().IncreaseOctreeCounter();
 		{
-			CRY_PROFILE_REGION(PROFILE_3DENGINE, "Traverse Outdoor Octree");
-			uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
-			m_pObjectsTree->Render_Object_Nodes(false, OCTREENODE_RENDER_FLAG_OBJECTS, GetSkyColor(), outdoorCullMask, passInfo);
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "Traverse Outdoor Octree");
+			if (uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask))
+				m_pObjectsTree->Render_Object_Nodes(false, OCTREENODE_RENDER_FLAG_OBJECTS, GetSkyColor(), outdoorCullMask, passInfo);
 		}
 
 		if (GetCVars()->e_ObjectsTreeBBoxes >= 3)
@@ -1697,7 +1714,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 	// render outdoor entities very near of camera - fix for 1p vehicle entering into indoor
 	{
-		CRY_PROFILE_REGION(PROFILE_3DENGINE, "COctreeNode::Render_Object_Nodes_NEAR");
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "COctreeNode::Render_Object_Nodes_NEAR");
 		passInfo.GetRendItemSorter().IncreaseOctreeCounter();
 		if (GetCVars()->e_PortalsBigEntitiesFix)
 		{
@@ -1715,13 +1732,16 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	for (int i = 0; i < m_lstAlwaysVisible.Count(); i++)
 	{
 		IRenderNode* pObj = m_lstAlwaysVisible[i];
-		const AABB& objBox = pObj->GetBBox();
+		if (!pObj->IsRenderable())
+			continue;
+
+		const AABB objBox = pObj->GetBBox();
 		// don't frustum cull the HUD. When e.g. zooming the FOV for this camera is very different to the
 		// fixed HUD FOV, and this can cull incorrectly.
 		auto dwRndFlags = pObj->GetRndFlags();
 		if (dwRndFlags & ERF_HUD || passInfo.GetCamera().IsAABBVisible_E(objBox))
 		{
-			CRY_PROFILE_REGION(PROFILE_3DENGINE, "C3DEngine::RenderScene_DrawAlwaysVisible");
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "C3DEngine::RenderScene_DrawAlwaysVisible");
 
 			Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 			float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
@@ -1847,7 +1867,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	FinishWindGridJob();
 
 	{
-		CRY_PROFILE_REGION(PROFILE_RENDERER, "Renderer::EF_EndEf3D");
+		CRY_PROFILE_SECTION(PROFILE_RENDERER, "Renderer::EF_EndEf3D");
 		GetRenderer()->EF_EndEf3D(GetObjManager()->m_nUpdateStreamingPrioriryRoundId, GetObjManager()->m_nUpdateStreamingPrioriryRoundIdFast, passInfo, nRenderFlags);
 	}
 
@@ -1949,17 +1969,19 @@ void C3DEngine::ProcessOcean(const SRenderingPassInfo& passInfo)
 	}
 }
 
-bool C3DEngine::IsSkyVisible()
+bool C3DEngine::IsSkyVisible() const
 {
 	return GetCVars()->e_SkyBox && IsOutdoorVisible();
 }
 
-void C3DEngine::UpdateSky(const SRenderingPassInfo& passInfo)
+void C3DEngine::ProcessSky(const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
-	MEMSTAT_CONTEXT(EMemStatContextType::Other, "C3DEngine::UpdateSky");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "C3DEngine::ProcessSky");
 
-	const eSkyType skyType = GetSkyType();
+	IMaterial* pSkyMaterial = GetSkyMaterial();
+	Vec3 vSkyBoxOpacity(1.0f, 1.0f, 1.0f);
+	string SkyDomeTextureName;
 
 	// Note: this should be deprecated at some point.
 	// Update some sky params from the material:
@@ -1967,43 +1989,48 @@ void C3DEngine::UpdateSky(const SRenderingPassInfo& passInfo)
 	//    - m_vSkyBoxExposure
 	//    - m_vSkyBoxOpacity
 	//    - m_SkyDomeTextureName
-	if (m_pSkyMat[skyType]
-		&& m_pSkyMat[skyType]->GetShaderItem().m_pShader
-		&& m_pSkyMat[skyType]->GetShaderItem().m_pShaderResources)
+	if (pSkyMaterial &&
+		pSkyMaterial->GetShaderItem().m_pShader &&
+		pSkyMaterial->GetShaderItem().m_pShaderResources)
 	{
-		m_bSkyMatOverride = true;
+		IRenderShaderResources* const pShaderResources = pSkyMaterial->GetShaderItem().m_pShaderResources;
 
-		IRenderShaderResources* const pShaderResources = m_pSkyMat[skyType]->GetShaderItem().m_pShaderResources;
-
-		auto& shaderParams = pShaderResources->GetParameters();
-		for (int i = 0; i < shaderParams.size(); i++)
-		{
-			const SShaderParam* const sp = &(shaderParams)[i];
-			if (sp && !stricmp(sp->m_Name, "SkyboxAngle") && sp->m_Type == eType_FLOAT)
-			{
-				m_fSkyBoxAngle[1] = sp->m_Value.m_Float;
-			}
-		}
-
-		m_vSkyBoxExposure[1] = pShaderResources->GetFinalEmittance().toVec3();
-		m_vSkyBoxOpacity[1] = (pShaderResources->GetColorValue(EFTT_DIFFUSE) * pShaderResources->GetStrengthValue(EFTT_OPACITY)).toVec3();
+		vSkyBoxOpacity = (pShaderResources->GetColorValue(EFTT_DIFFUSE) * pShaderResources->GetStrengthValue(EFTT_OPACITY)).toVec3();
 
 		if (const SEfResTexture* const pSkyTexInfo = pShaderResources->GetTexture(EFTT_DIFFUSE))
 		{
-			m_SkyDomeTextureName[1] = pSkyTexInfo->m_Name;
+			SkyDomeTextureName = pSkyTexInfo->m_Name;
 		}
-		else
-		{
-			stl::free_container(m_SkyDomeTextureName[1]);
-		}
-	}
-	else
-	{
-		m_bSkyMatOverride = false;
 	}
 
-	// dynamic sky dome
-	if (skyType == eSkyType_HDRSky)
+	const bool bOverlaySkyBox =
+		(vSkyBoxOpacity.x != 0.0f ||
+		 vSkyBoxOpacity.y != 0.0f ||
+		 vSkyBoxOpacity.z != 0.0f) &&
+		!SkyDomeTextureName.empty();
+
+	const bool bProceduralSkyBox =
+		(vSkyBoxOpacity.x != 1.0f ||
+		 vSkyBoxOpacity.y != 1.0f ||
+		 vSkyBoxOpacity.z != 1.0f) ||
+		SkyDomeTextureName.empty();
+
+	// Overlay sky box
+	if (bOverlaySkyBox)
+	{
+		//!< Vertical fov in radiants [0..1*PI].
+		// Example:
+		// - fFoV is 90deg (or PI/2rad), so 25% of the sky-box fills the screen
+		// - fMipFactor is -2 (2^-2 = 0.25)
+		float fFoV = passInfo.GetCamera().GetFov() / 3.14159265358979323846f /*M_PI*/;
+		float fMipFactor = log2f(fFoV);
+
+		pSkyMaterial->RequestTexturesLoading(fMipFactor);
+	//	gRenDev->EF_PrecacheResource(pShaderResources, ?, ?, ?, ?);
+	}
+
+	// Procedural sky dome
+	if (bProceduralSkyBox)
 	{
 #ifndef CONSOLE_CONST_CVAR_MODE
 		GetCVars()->e_SkyQuality = crymath::clamp(GetCVars()->e_SkyQuality, 1, 2);
@@ -2603,14 +2630,15 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		const bool bFallback = nMainFrameId - nFallbackFrameId < 50;
 
 		cry_sprintf(szMeshPoolUse,
-		            "Mesh Pool: MemUsed:%.2fKB(%d%%%%) Peak %.fKB PoolSize:%" PRISIZE_T "KB Flushes %" PRISIZE_T " Fallbacks %.3fKB %s",
+		            "Mesh Pool: Used:%.2fKB(%d%%%%) Peak %.fKB (%.fKB) PoolSize:%" PRISIZE_T "KB Flushes %" PRISIZE_T " Fallbacks %.3fKB%s",
 		            (float)stats.nPoolInUse / 1024,
 		            iPercentage,
 		            (float)stats.nPoolInUsePeak / 1024,
+		            (float)stats.nPoolRequestPeak / 1024,
 		            stats.nPoolSize / 1024,
 		            stats.nFlushes,
 		            (float)stats.nFallbacks / 1024.0f,
-		            (bFallback ? "FULL!" : bOverflow ? "OVERFLOW" : ""));
+		            (bFallback ? " FULL!" : bOverflow ? " OVERFLOW" : ""));
 
 		if (stats.nPoolSize && (displayInfoVal == 2 || bOverflow || bFallback))
 		{
@@ -2618,19 +2646,32 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 			                     bFallback ? Col_Red : bOverflow ? Col_Orange : Col_White,
 			                     "%s", szMeshPoolUse);
 		}
-		if (stats.nPoolSize && displayInfoVal == 2)
+		if (stats.nInstancePoolSize && displayInfoVal == 2)
 		{
 			char szVolatilePoolsUse[256];
 			cry_sprintf(szVolatilePoolsUse,
-			            "Mesh Instance Pool: MemUsed:%.2fKB(%d%%%%) Peak %.fKB PoolSize:%" PRISIZE_T "KB Fallbacks %.3fKB",
+			            "Mesh Instance Pool: Used:%.2fKB(%d%%%%) Peak %.fKB (%.fKB) PoolSize:%" PRISIZE_T "KB Fallbacks %.3fKB",
 			            (float)stats.nInstancePoolInUse / 1024,
 			            iVolatilePercentage,
 			            (float)stats.nInstancePoolInUsePeak / 1024,
+			            (float)stats.nInstancePoolRequestPeak / 1024,
 			            stats.nInstancePoolSize / 1024,
 			            (float)stats.nInstanceFallbacks / 1024.0f);
 
 			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE,
-			                     Col_White, "%s", szVolatilePoolsUse);
+				Col_White, "%s", szVolatilePoolsUse);
+		}
+		if (displayInfoVal == 2)
+		{
+			char szNoPoolsUse[256];
+			cry_sprintf(szNoPoolsUse,
+				"Mesh Unpool: Used:%.2fKB Peak %.fKB (%.fKB)",
+				(float)stats.nUnpooledInUse / 1024,
+				(float)stats.nUnpooledInUsePeak / 1024,
+				(float)stats.nUnpooledRequestPeak / 1024);
+
+			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE,
+				Col_White, "%s", szNoPoolsUse);
 		}
 
 		memcpy(&lastStats, &stats, sizeof(lastStats));
@@ -2925,7 +2966,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		const float curPhysTime = TICKS_TO_MS(gUpdateTimes[gUpdateTimeIdx].PhysStepTime);
 		DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE_SMALL, curPhysTime > MAX_PHYS_TIME ? Col_Red : Col_White, "%3.1f ms      Phys", curPhysTime);
 		const float curPhysWaitTime = TICKS_TO_MS(gUpdateTimes[gUpdateTimeIdx].physWaitTime);
-		DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE_SMALL, curPhysTime > MAX_PHYS_TIME ? Col_Red : Col_White, "%3.1f ms   WaitPhys", curPhysWaitTime);
+		DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE_SMALL, curPhysTime > MAX_PHYS_TIME ? Col_Red : Col_White, "%3.1f ms  WaitPhys", curPhysWaitTime);
 
 		IF (gEnv->pPhysicalWorld, 1)
 		{
@@ -3023,16 +3064,21 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 				pProfiler->AcquireReadAccess();
 				for(auto pTracker : *pProfiler->GetActiveTrackers())
 				{
-					if (pTracker->pDescription->subsystem == PROFILE_AUDIO)
+					if (pTracker->pDescription->subsystem == PROFILE_AUDIO && !pTracker->pDescription->isWaiting)
 					{
 						fTimeMS += pTracker->selfValue.Average();
 					}
 				}
 				pProfiler->ReleaseReadAccess();
+				
+				DrawTextRightAligned(fTextPosX, fTextPosY += (fTextStepY - STEP_SMALL_DIFF),
+					DISPLAY_INFO_SCALE_SMALL, fTimeMS > maxVal ? Col_Red : Col_White, "%.2f ms     Audio", fTimeMS);
 			}
-
-			DrawTextRightAligned(fTextPosX, fTextPosY += (fTextStepY - STEP_SMALL_DIFF),
-			                     DISPLAY_INFO_SCALE_SMALL, fTimeMS > maxVal ? Col_Red : Col_White, "%.2f ms     Audio", fTimeMS);
+			else
+			{
+				DrawTextRightAligned(fTextPosX, fTextPosY += (fTextStepY - STEP_SMALL_DIFF),
+					DISPLAY_INFO_SCALE_SMALL, fTimeMS > maxVal ? Col_Red : Col_White, "-------     Audio");
+			}
 		}
 
 		{
@@ -3040,7 +3086,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 
 			float fTimeMS = 1000.0f * gEnv->pTimer->TicksToSeconds(stat.nMainStreamingThreadWait);
 			DrawTextRightAligned(fTextPosX, fTextPosY += (fTextStepY - STEP_SMALL_DIFF),
-			                     DISPLAY_INFO_SCALE_SMALL, Col_White, "%3.1f ms     StreamFin", fTimeMS);
+			                     DISPLAY_INFO_SCALE_SMALL, Col_White, "%3.1f ms   StreamFin", fTimeMS);
 
 		}
 
@@ -3050,7 +3096,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 
 			float fTimeMS = 1000.0f * gEnv->pTimer->TicksToSeconds(stat.m_nNetworkSync);
 			DrawTextRightAligned(fTextPosX, fTextPosY += (fTextStepY - STEP_SMALL_DIFF),
-			                     DISPLAY_INFO_SCALE_SMALL, Col_White, "%3.1f ms     NetworkSync", fTimeMS);
+			                     DISPLAY_INFO_SCALE_SMALL, Col_White, "%3.1f ms NetworkSync", fTimeMS);
 		}
 	}
 
@@ -3675,8 +3721,8 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 	// render outdoor point lights and collect dynamic point light frustums
 	if (IsObjectsTreeValid())
 	{
-		uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
-		m_pObjectsTree->Render_LightSources(false, outdoorCullMask, passInfo);
+		if (uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask))
+			m_pObjectsTree->Render_LightSources(false, outdoorCullMask, passInfo);
 	}
 
 	// render indoor point lights and collect dynamic point light frustums
@@ -3703,7 +3749,7 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 	m_onePassShadowFrustumsCount = shadowFrustums.size();
 
 	shadowPassInfo.reserve(kMaxShadowPassesNum);
-	CRenderView* pMainRenderView = passInfo.GetRenderView();
+	CRenderView* pRenderView = passInfo.GetRenderView();
 	for (const auto& pair : shadowFrustums)
 	{
 		auto* pFr = pair.first;
@@ -3712,12 +3758,12 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 		assert(!pFr->pOnePassShadowView);
 
 		// Prepare time-sliced shadow frustum updates
-		GetRenderer()->PrepareShadowFrustumForShadowPool(pFr,
+		GetRenderer()->PrepareShadowFrustumForShadowPool((IRenderView*)pRenderView, pFr,
 			static_cast<uint32>(passInfo.GetFrameID()),
 			light->GetLightProperties(),
 			&nTimeSlicedShadowsUpdatedThisFrame);
 
-		IRenderViewPtr pShadowsView = GetRenderer()->GetNextAvailableShadowsView((IRenderView*)pMainRenderView, pFr);
+		IRenderViewPtr pShadowsView = GetRenderer()->GetNextAvailableShadowsView((IRenderView*)pRenderView, pFr);
 		for (int cubeSide = 0; cubeSide < pFr->GetNumSides() && shadowPassInfo.size() < kMaxShadowPassesNum; ++cubeSide)
 		{
 			if (pFr->ShouldCacheSideHint(cubeSide))
@@ -3744,5 +3790,21 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 		pShadowsView->SetShadowFrustumOwner(pFr);
 		pShadowsView->SwitchUsageMode(IRenderView::eUsageModeWriting);
 		pFr->pOnePassShadowView = std::move(pShadowsView);
+	}
+}
+
+void C3DEngine::FinalizePrepareShadowPasses(const SRenderingPassInfo& passInfo, const std::vector<std::pair<ShadowMapFrustum*, const CLightEntity*>>& shadowFrustums, std::vector<SRenderingPassInfo>& shadowPassInfo)
+{
+	CRY_PROFILE_FUNCTION_WAITING(PROFILE_3DENGINE);
+
+	for (const auto& frustumLightPair : shadowFrustums)
+	{
+		if (frustumLightPair.first->IsCached())
+		{
+			if (auto& pShadowCacheData = frustumLightPair.first->pShadowCacheData)
+			{
+				pShadowCacheData->mTraverseOctreeJobState.Wait();
+			}
+		}
 	}
 }

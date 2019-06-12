@@ -35,6 +35,9 @@ class CShadowMapStage : public CGraphicsPipelineStage
 		ePass_First = ePass_DirectionalLight
 	};
 
+	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES,
+		"The pipeline-state array is unable to carry as much pass-permutation as defined here!");
+
 public:
 	static const EGraphicsPipelineStage StageID = eStage_ShadowMap;
 
@@ -163,7 +166,8 @@ private:
 
 	bool IsStageActive() const
 	{
-		return !RenderView()->IsRecursive() && RenderView()->GetCurrentEye() != CCamera::eEye_Right;
+		bool isSecondaryViewport = (m_graphicsPipeline.GetPipelineDescription().shaderFlags & SHDF_SECONDARY_VIEWPORT) != 0;
+		return !isSecondaryViewport && !RenderView()->IsRecursive() && RenderView()->GetCurrentEye() != CCamera::eEye_Right;
 	}
 
 	_smart_ptr<CTexture>     m_ShadowMapCache[MAX_GSM_LODS_NUM];

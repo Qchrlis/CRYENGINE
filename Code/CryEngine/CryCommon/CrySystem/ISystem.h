@@ -126,7 +126,7 @@ struct ICoreRegistry;
 }   // ~Script namespace
 
 namespace UDR {
-struct IUDR;
+struct IUDRSystem;
 }
 
 struct IPluginManager;
@@ -483,8 +483,6 @@ enum ESystemEvent
 	//! Purpose of this event is to enable different modules to communicate with each other without knowing about each other.
 	ESYSTEM_EVENT_URI,
 
-	ESYSTEM_EVENT_USER = 0x1000,
-
 	ESYSTEM_EVENT_BEAM_PLAYER_TO_CAMERA_POS,
 
 	//! Sent if the CrySystem module initialized successfully.
@@ -511,7 +509,12 @@ enum ESystemEvent
 	ESYSTEM_EVENT_GAME_FRAMEWORK_INIT_DONE,
 
 	//! Sent if the CryAction module is about to shutdown
-	ESYSTEM_EVENT_GAME_FRAMEWORK_ABOUT_TO_SHUTDOWN
+	ESYSTEM_EVENT_GAME_FRAMEWORK_ABOUT_TO_SHUTDOWN,
+
+
+	//! Event IDs from this value upwards can be used to define custom events.
+	//! Should always be the last value!
+	ESYSTEM_EVENT_USER,
 };
 
 //! User defined callback, which can be passed to ISystem.
@@ -562,7 +565,6 @@ struct ISystemEventListener
 {
 	// <interfuscator:shuffle>
 	virtual ~ISystemEventListener(){}
-	virtual void OnSystemEventAnyThread(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) {}
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) = 0;
 	// </interfuscator:shuffle>
 };
@@ -761,9 +763,9 @@ CRY_CREATE_ENUM_FLAG_OPERATORS(ELoadConfigurationFlags);
 
 struct SPlatformInfo
 {
-	const char*  szProcessorType;
-	unsigned int numCoresAvailableToProcess;
-	unsigned int numLogicalProcessors;
+	const char*  szProcessorType = nullptr;
+	unsigned int numCoresAvailableToProcess = 0;
+	unsigned int numLogicalProcessors = 0;
 
 #if CRY_PLATFORM_WINDOWS
 	enum EWinVersion
@@ -781,11 +783,11 @@ struct SPlatformInfo
 
 	struct SWinInfo
 	{
-		char        path[_MAX_PATH];
-		EWinVersion ver;
-		uint32_t    build;
-		bool        is64Bit;
-		bool        vistaKB940105Required;
+		char        path[_MAX_PATH] = { '\0' };
+		EWinVersion ver = EWinVersion::WinUndetected;
+		uint32_t    build = 0;
+		bool        is64Bit = false;
+		bool        vistaKB940105Required = false;
 	};
 
 	SWinInfo winInfo;
@@ -836,85 +838,85 @@ union UAsyncDipState
 //! \see ISystem
 struct SSystemGlobalEnvironment
 {
-	IDialogSystem*                 pDialogSystem;
-	I3DEngine*                     p3DEngine;
-	INetwork*                      pNetwork;
-	INetContext*                   pNetContext;
-	ICryLobby*                     pLobby;
-	IScriptSystem*                 pScriptSystem;
-	IPhysicalWorld*                pPhysicalWorld;
-	IFlowSystem*                   pFlowSystem;
-	IInput*                        pInput;
-	IStatoscope*                   pStatoscope;
-	ICryPak*                       pCryPak;
-	IFileChangeMonitor*            pFileChangeMonitor;
-	IParticleManager*              pParticleManager;
-	IOpticsManager*                pOpticsManager;
-	ITimer*                        pTimer;
-	ICryFont*                      pCryFont;
-	IGameFramework*                pGameFramework;
-	ILocalMemoryUsage*             pLocalMemoryUsage;
-	IEntitySystem*                 pEntitySystem;
-	IConsole*                      pConsole;
-	CryAudio::IAudioSystem*        pAudioSystem;
-	ISystem*                       pSystem;
-	ICharacterManager*             pCharacterManager;
-	IAISystem*                     pAISystem;
-	ILog*                          pLog;
-	ICodeCheckpointMgr*            pCodeCheckpointMgr;
-	IMovieSystem*                  pMovieSystem;
-	INameTable*                    pNameTable;
-	IRenderer*                     pRenderer;
-	IRenderAuxGeom*                pAuxGeomRenderer;
-	IHardwareMouse*                pHardwareMouse;
-	IMaterialEffects*              pMaterialEffects;
-	JobManager::IJobManager*       pJobManager;
-	IOverloadSceneManager*         pOverloadSceneManager;
-	IFlashUI*                      pFlashUI;
-	UIFramework::IUIFramework*     pUIFramework;
-	IServiceNetwork*               pServiceNetwork;
-	IRemoteCommandManager*         pRemoteCommandManager;
-	DRS::IDynamicResponseSystem*   pDynamicResponseSystem;
-	IThreadManager*                pThreadManager;
-	IScaleformHelper*              pScaleformHelper;  // nullptr when Scaleform support is not enabled
-	ICrySchematycCore*             pSchematyc;
-	Schematyc2::IFramework*        pSchematyc2;
-	Cry::Reflection::IModule*      pReflection;
-	Cry::Script::ICoreEnvironment* pScriptCoreEnv;
-	Cry::Script::ICoreRegistry*    pScriptCoreRegistry;
-	Cry::UDR::IUDR*                pUDR;
+	IDialogSystem*                 pDialogSystem = nullptr;
+	I3DEngine*                     p3DEngine = nullptr;
+	INetwork*                      pNetwork = nullptr;
+	INetContext*                   pNetContext = nullptr;
+	ICryLobby*                     pLobby = nullptr;
+	IScriptSystem*                 pScriptSystem = nullptr;
+	IPhysicalWorld*                pPhysicalWorld = nullptr;
+	IFlowSystem*                   pFlowSystem = nullptr;
+	IInput*                        pInput = nullptr;
+	IStatoscope*                   pStatoscope = nullptr;
+	ICryPak*                       pCryPak = nullptr;
+	IFileChangeMonitor*            pFileChangeMonitor = nullptr;
+	IParticleManager*              pParticleManager = nullptr;
+	IOpticsManager*                pOpticsManager = nullptr;
+	ITimer*                        pTimer = nullptr;
+	ICryFont*                      pCryFont = nullptr;
+	IGameFramework*                pGameFramework = nullptr;
+	ILocalMemoryUsage*             pLocalMemoryUsage = nullptr;
+	IEntitySystem*                 pEntitySystem = nullptr;
+	IConsole*                      pConsole = nullptr;
+	CryAudio::IAudioSystem*        pAudioSystem = nullptr;
+	ISystem*                       pSystem = nullptr;
+	ICharacterManager*             pCharacterManager = nullptr;
+	IAISystem*                     pAISystem = nullptr;
+	ILog*                          pLog = nullptr;
+	ICodeCheckpointMgr*            pCodeCheckpointMgr = nullptr;
+	IMovieSystem*                  pMovieSystem = nullptr;
+	INameTable*                    pNameTable = nullptr;
+	IRenderer*                     pRenderer = nullptr;
+	IRenderAuxGeom*                pAuxGeomRenderer = nullptr;
+	IHardwareMouse*                pHardwareMouse = nullptr;
+	IMaterialEffects*              pMaterialEffects = nullptr;
+	JobManager::IJobManager*       pJobManager = nullptr;
+	IOverloadSceneManager*         pOverloadSceneManager = nullptr;
+	IFlashUI*                      pFlashUI = nullptr;
+	UIFramework::IUIFramework*     pUIFramework = nullptr;
+	IServiceNetwork*               pServiceNetwork = nullptr;
+	IRemoteCommandManager*         pRemoteCommandManager = nullptr;
+	DRS::IDynamicResponseSystem*   pDynamicResponseSystem = nullptr;
+	IThreadManager*                pThreadManager = nullptr;
+	IScaleformHelper*              pScaleformHelper = nullptr;
+	ICrySchematycCore*             pSchematyc = nullptr;
+	Schematyc2::IFramework*        pSchematyc2 = nullptr;
+	Cry::Reflection::IModule*      pReflection = nullptr;
+	Cry::Script::ICoreEnvironment* pScriptCoreEnv = nullptr;
+	Cry::Script::ICoreRegistry*    pScriptCoreRegistry = nullptr;
+	Cry::UDR::IUDRSystem*          pUDR = nullptr;
 
 #if CRY_PLATFORM_DURANGO
-	void*      pWindow;
-	EPLM_State ePLM_State;
+	void*      pWindow = nullptr;
+	EPLM_State ePLM_State = EPLM_UNDEFINED;
 #endif
 
 #if defined(MAP_LOADING_SLICING)
-	ISystemScheduler*     pSystemScheduler;
+	ISystemScheduler*     pSystemScheduler = nullptr;
 #endif
-	LiveCreate::IManager* pLiveCreateManager;
-	LiveCreate::IHost*    pLiveCreateHost;
+	LiveCreate::IManager* pLiveCreateManager = nullptr;
+	LiveCreate::IHost*    pLiveCreateHost = nullptr;
 
-	IMonoEngineModule*    pMonoRuntime;
+	IMonoEngineModule*    pMonoRuntime = nullptr;
 
-	threadID              mMainThreadId;      //!< The main thread ID is used in multiple systems so should be stored globally.
+	threadID              mMainThreadId = THREADID_NULL;      //!< The main thread ID is used in multiple systems so should be stored globally.
 
-	uint32                nMainFrameID;
+	uint32                nMainFrameID = 0;
 
 	const char*           szCmdLine = "";       //!< Startup command line.
 
 	//! Generic debug string which can be easily updated by any system and output by the debug handler
 	enum { MAX_DEBUG_STRING_LENGTH = 128 };
-	char szDebugStatus[MAX_DEBUG_STRING_LENGTH];
+	char szDebugStatus[MAX_DEBUG_STRING_LENGTH] = {'\0'};
 
 	//! Used to tell if this is a server/multiplayer instance
-	bool bServer;
-	bool bMultiplayer;
-	bool bHostMigrating;
+	bool bServer = false;
+	bool bMultiplayer = false;
+	bool bHostMigrating = false;
 
 #if defined(CRY_PLATFORM_ORBIS) && (!defined(RELEASE) || defined(PERFORMANCE_BUILD))
 	//! Specifies if we are on a PS4 development kit
-	bool bPS4DevKit;
+	bool bPS4DevKit = false;
 #endif
 
 	//////////////////////////////////////////////////////////////////////////
@@ -922,34 +924,31 @@ struct SSystemGlobalEnvironment
 	typedef bool(*TProfilerSectionStartCallback)(struct SProfilingSection*);
 	typedef void(*TProfilerSectionEndCallback)  (struct SProfilingSection*);
 	typedef void(*TProfilerMarkerCallback)      (struct SProfilingMarker*);
-	TProfilerSectionStartCallback startProfilingSection;
-	TProfilerSectionEndCallback   endProfilingSection;
-	TProfilerMarkerCallback       recordProfilingMarker;
+	TProfilerSectionStartCallback startProfilingSection = nullptr;
+	TProfilerSectionEndCallback   endProfilingSection = nullptr;
+	TProfilerMarkerCallback       recordProfilingMarker = nullptr;
 	//////////////////////////////////////////////////////////////////////////
 
-#if defined(USE_CRY_ASSERT)
-	bool            ignoreAllAsserts = false;
-	bool            noAssertDialog = false;
-	bool            stoppedOnAssert = false;
-	ECryAssertLevel cryAssertLevel = ECryAssertLevel::Enabled;
-#endif
-
 	//! Whether we are running unattended, disallows message boxes and other blocking events that require human intervention
-	bool          bUnattendedMode;
+	bool bUnattendedMode = false;
 	//! Whether we are unit testing
-	bool          bTesting;
+	bool bTesting = false;
 
-	bool          bNoRandomSeed;
+	bool bNoRandomSeed = false;
+
+#if defined(USE_CRY_ASSERT)
+	Cry::Assert::Detail::SSettings assertSettings;
+#endif
 
 	SPlatformInfo pi;
 
 	// Protected functions.
-	SSystemInitParams::ProtectedFunction pProtectedFunctions[eProtectedFuncsLast];
+	SSystemInitParams::ProtectedFunction pProtectedFunctions[eProtectedFuncsLast] = {};
 
 	//////////////////////////////////////////////////////////////////////////
 	//! Flag to able to print out of memory condition
-	bool             bIsOutOfMemory;
-	bool             bIsOutOfVideoMemory;
+	bool             bIsOutOfMemory = false;
+	bool             bIsOutOfVideoMemory = false;
 
 	ILINE const bool IsClient() const
 	{
@@ -1102,23 +1101,23 @@ struct SSystemGlobalEnvironment
 	}
 
 #if CRY_PLATFORM_DESKTOP
-	bool bDedicatedArbitrator;
+	bool bDedicatedArbitrator = false;
 
 private:
 	#if !defined(RELEASE)
-	bool bEditor;               //!< Engine is running under editor.
-	bool bEditorGameMode;       //!< Engine is in editor game mode.
-	bool bEditorSimulationMode; //!< Engine is in editor Physics/AI simulation mode.
+	bool bEditor = false;               //!< Engine is running under editor.
+	bool bEditorGameMode = false;       //!< Engine is in editor game mode.
+	bool bEditorSimulationMode = false; //!< Engine is in editor Physics/AI simulation mode.
 	#endif
 
 	#if !defined(DEDICATED_SERVER)
-	bool bDedicated;       //!< Engine is in dedicated.
-	bool bClient;
+	bool bDedicated = false; //!< Engine is in dedicated.
+	bool bClient = false;
 	#endif
 #endif
 
-	bool m_isFMVPlaying;
-	bool m_isCutscenePlaying;
+	bool m_isFMVPlaying = false;
+	bool m_isCutscenePlaying = false;
 
 public:
 	SSystemGlobalEnvironment()
@@ -1309,6 +1308,7 @@ struct ISystem
 	virtual IUserAnalyticsSystem*   GetIUserAnalyticsSystem() = 0;
 	virtual Cry::IPluginManager*    GetIPluginManager() = 0;
 	virtual Cry::IProjectManager*   GetIProjectManager() = 0;
+	virtual Cry::UDR::IUDRSystem*   GetIUDR() = 0;
 
 	//! \return Can be NULL, because it only exists when running through the editor, not in pure game mode.
 	virtual IResourceManager*                  GetIResourceManager() = 0;
@@ -1498,20 +1498,6 @@ struct ISystem
 	//! Called after the processing of the assert message box(Windows or Xbox).
 	//! It will be called even when asserts are disabled by the console variables.
 	virtual void OnAssert(const char* condition, const char* message, const char* fileName, unsigned int fileLineNumber) = 0;
-
-	//! Returns if the assert window from CryAssert is visible.
-	//! OBS1: needed by the editor, as in some cases it can freeze if during an assert engine it will handle
-	//! some events such as mouse movement in a CryPhysics assert.
-	//! OBS2: it will always return false, if asserts are disabled or ignored.
-	virtual bool IsAssertDialogVisible() const = 0;
-
-	//! Checks if asserts are enabled for the specified module (see eCryModule)
-	virtual bool AreAssertsEnabledForModule(uint32 moduleId) = 0;
-	//! Disables assertions for the specified module (see eCryModule)
-	virtual void DisableAssertionsForModule(uint32 moduleId) = 0;
-	//! Sets the AssertVisisble internal variable.
-	//! Typically it should only be called by CryAssert.
-	virtual void SetAssertVisible(bool bAssertVisble) = 0;
 #endif
 
 	//! Get the index of the currently running Crytek application, (0 = first instance, 1 = second instance, etc).

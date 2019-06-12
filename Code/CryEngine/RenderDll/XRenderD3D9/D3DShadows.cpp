@@ -120,7 +120,8 @@ void CD3D9Renderer::EF_PrepareShadowGenRenderList(const SRenderingPassInfo& pass
 	}
 
 #if defined(ENABLE_PROFILING_CODE)
-	m_frameRenderStats[m_nFillThreadID].m_NumShadowPoolFrustums += CDeferredShading::Instance().m_shadowPoolAlloc.Num();
+	CDeferredShading* pDeferredShading = pRenderView->GetGraphicsPipeline()->GetDeferredShading();
+	m_frameRenderStats[m_nFillThreadID].m_NumShadowPoolFrustums += pDeferredShading->m_shadowPoolAlloc.Num();
 #endif
 
 	// Prepare frustums for tiled shading
@@ -187,10 +188,12 @@ bool CD3D9Renderer::EF_PrepareShadowGenForLight(CRenderView* pRenderView, SRende
 
 void CD3D9Renderer::PrepareShadowPool(CRenderView* pRenderView) const
 {
+	CDeferredShading* pDeferredShading = pRenderView->GetGraphicsPipeline()->GetDeferredShading();
+
 	const auto nRequestedPoolSize = iConsole->GetCVar("e_ShadowsPoolSize")->GetIVal();
-	auto& shadowPoolSize = CDeferredShading::Instance().m_nShadowPoolSize;
-	auto& blockPack = CDeferredShading::Instance().m_blockPack;
-	auto& shadowPoolAlloc = CDeferredShading::Instance().m_shadowPoolAlloc;
+	auto& shadowPoolSize = pDeferredShading->m_nShadowPoolSize;
+	auto& blockPack = pDeferredShading->m_blockPack;
+	auto& shadowPoolAlloc = pDeferredShading->m_shadowPoolAlloc;
 
 	RenderLightsList& arrLights = pRenderView->GetLightsArray(eDLT_DeferredLight);
 
@@ -341,19 +344,9 @@ bool CD3D9Renderer::PrepareShadowGenForFrustum(CRenderView* pRenderView, ShadowM
 		//////////////////////////////////////////////////////////////////////////
 		if (!pCurFrustum->bOmniDirectionalShadow)
 		{
-			if (pCurFrustum->m_Flags & (DLF_PROJECT | DLF_AREA_LIGHT))
+			if (pCurFrustum->m_Flags & DLF_PROJECT)
 			{
 				SRenderLight instLight = *pLight;
-				if (pLight->m_Flags & DLF_AREA_LIGHT)
-				{
-					// Pull the shadow frustum back to encompas the area of the light source.
-					float fMaxSize = max(pLight->m_fAreaWidth, pLight->m_fAreaHeight);
-					float fScale = fMaxSize / max(tanf(DEG2RAD(pLight->m_fLightFrustumAngle)), 0.0001f);
-
-					Vec3 vOffsetDir = fScale * pLight->m_ObjMatrix.GetColumn0().GetNormalized();
-					instLight.SetPosition(instLight.m_Origin - vOffsetDir);
-					instLight.m_fProjectorNearPlane = fScale;
-				}
 
 				// Frustum angle is clamped to prevent projection matrix problems.
 				// We clamp here because area lights and non-shadow casting lights can cast 180 degree light.

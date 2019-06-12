@@ -158,13 +158,14 @@ void CHeightMapAOStage::Execute()
 	FUNCTION_PROFILER_RENDERER();
 
 	CD3D9Renderer* const __restrict pRenderer = gcpRendD3D;
+	CDeferredShading* pDeferredShading = m_graphicsPipeline.GetDeferredShading();
 
 	CRY_ASSERT(!m_bHeightMapAOExecuted);
 	m_bHeightMapAOExecuted = true;
 
-	if (CDeferredShading::Instance().GetResolvedStencilRT() == nullptr)
+	if (m_graphicsPipelineResources.m_pTexClipVolumes == nullptr)
 	{
-		CDeferredShading::Instance().SetupPasses(RenderView());
+		pDeferredShading->SetupPasses(RenderView());
 	}
 
 	// Prepare Height Map AO frustum
@@ -189,9 +190,9 @@ void CHeightMapAOStage::Execute()
 
 		const int resolutionIndex = clamp_tpl(m_nHeightMapAOConfig - 1, 0, 2);
 		CTexture* pDepthTextures[] = {
-			CRendererResources::s_ptexLinearDepthScaled[1],
-			CRendererResources::s_ptexLinearDepthScaled[0],
-			CRendererResources::s_ptexLinearDepth };
+			m_graphicsPipelineResources.m_pTexLinearDepthScaled[1],
+			m_graphicsPipelineResources.m_pTexLinearDepthScaled[0],
+			m_graphicsPipelineResources.m_pTexLinearDepth };
 		CTexture* pDestRT = m_pHeightMapAOMask[0];
 
 		m_pHeightMapAOScreenDepthTex = pDepthTextures[resolutionIndex];
@@ -274,8 +275,10 @@ void CHeightMapAOStage::Execute()
 			CShader* pShader = pRenderer->m_cEF.s_ShaderShadowBlur;
 
 			const Vec4* pClipVolumeParams = nullptr;
-			uint32 clipVolumeCount = RenderView()->GetClipVolumes().size();
-			CDeferredShading::Instance().GetClipVolumeParams(pClipVolumeParams);
+			uint32 clipVolumeCount = 0;
+
+			if (auto pClipVolumesStage = m_graphicsPipeline.GetStage<CClipVolumesStage>())
+				clipVolumeCount = pClipVolumesStage->GetClipVolumeShaderParams(pClipVolumeParams);
 
 			if (m_passSmoothing.IsDirty(resolutionIndex, clipVolumeCount > 0 ? 1 : 0))
 			{
@@ -289,7 +292,7 @@ void CHeightMapAOStage::Execute()
 
 				m_passSmoothing.SetTextureSamplerPair(0, pDestRT, EDefaultSamplerStates::PointClamp);
 				m_passSmoothing.SetTextureSamplerPair(1, m_pHeightMapAOScreenDepthTex, EDefaultSamplerStates::PointClamp);
-				m_passSmoothing.SetTextureSamplerPair(2, CDeferredShading::Instance().GetResolvedStencilRT(), EDefaultSamplerStates::PointClamp);
+				m_passSmoothing.SetTextureSamplerPair(2, m_graphicsPipelineResources.m_pTexClipVolumes, EDefaultSamplerStates::PointClamp);
 			}
 
 			static CCryNameR namePixelOffset("PixelOffset");

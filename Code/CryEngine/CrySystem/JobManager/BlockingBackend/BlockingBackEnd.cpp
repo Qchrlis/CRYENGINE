@@ -32,6 +32,7 @@ JobManager::BlockingBackEnd::CBlockingBackEnd::CBlockingBackEnd(JobManager::SInf
 ///////////////////////////////////////////////////////////////////////////////
 JobManager::BlockingBackEnd::CBlockingBackEnd::~CBlockingBackEnd()
 {
+	ShutDown();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -179,7 +180,7 @@ void JobManager::BlockingBackEnd::CBlockingBackEndWorkerThread::ThreadEntry()
 		///////////////////////////////////////////////////////////////////////////
 		// wait for new work
 		{
-			//CRY_PROFILE_REGION_WAITING(PROFILE_SYSTEM, "Wait - JobWorkerThread");
+			//CRY_PROFILE_SECTION_WAITING(PROFILE_SYSTEM, "Wait - JobWorkerThread");
 			m_rSemaphore.Acquire();
 		}
 
@@ -292,13 +293,14 @@ void JobManager::BlockingBackEnd::CBlockingBackEndWorkerThread::ThreadEntry()
 #if defined(JOBMANAGER_SUPPORT_STATOSCOPE)
 		const uint64 nStartTime = JobManager::IWorkerBackEndProfiler::GetTimeSample();
 #endif
-
 		// call delegator function to invoke job entry
 #if !defined(_RELEASE) || defined(PERFORMANCE_BUILD)
-		CRY_PROFILE_REGION(PROFILE_SYSTEM, "Job");
+		CRY_PROFILE_SECTION(PROFILE_SYSTEM, "Job");
 #endif
-		(*infoBlock.jobInvoker)(infoBlock.GetParamAddress());
-
+		{
+			MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Job: %s", CJobManager::Instance()->GetJobName(infoBlock.jobInvoker));
+			(*infoBlock.jobInvoker)(infoBlock.GetParamAddress());
+		}
 #if defined(JOBMANAGER_SUPPORT_STATOSCOPE)
 		JobManager::IWorkerBackEndProfiler* workerProfiler = m_pBlockingBackend->GetBackEndWorkerProfiler();
 		const uint64 nEndTime = JobManager::IWorkerBackEndProfiler::GetTimeSample();

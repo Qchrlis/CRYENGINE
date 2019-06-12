@@ -4,6 +4,7 @@
 #include "ParticleComponentRuntime.h"
 #include "ParticleEmitter.h"
 #include "ParticleSystem.h"
+#include "ParticleManager.h"
 #include "ParticleProfiler.h"
 
 namespace pfx2
@@ -206,22 +207,6 @@ void CParticleComponentRuntime::RemoveAllSpawners()
 	DebugStabilityCheck();
 }
 
-void CParticleComponentRuntime::RenderAll(const SRenderContext& renderContext)
-{
-	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
-
-	if (auto* pGPURuntime = GetGpuRuntime())
-	{
-		SParticleStats stats;
-		pGPURuntime->AccumStats(stats);
-		auto& statsGPU = GetPSystem()->GetThreadData().statsGPU;
-		statsGPU.components.rendered += stats.components.rendered;
-		statsGPU.particles.rendered += stats.particles.rendered;
-	}
-
-	m_pComponent->Render(*this, renderContext);
-}
-
 void CParticleComponentRuntime::Reparent(TConstArray<TParticleId> swapIds)
 {
 	Container(EDD_Particle).Reparent(swapIds, EPDT_ParentId);
@@ -383,18 +368,17 @@ void CParticleComponentRuntime::RemoveParticles()
 		TParticleIdArray swapIds(MemHeap());
 		const bool hasChildren = !m_pComponent->GetChildComponents().empty();
 		if (hasChildren)
-			swapIds.resize(numParticles);
-
-		Container().RemoveElements(removeIds, swapIds);
-
-		if (hasChildren)
 		{
+			swapIds.resize(numParticles);
+			Container().MakeSwapIds(removeIds, swapIds);
 			for (const auto& pChild : m_pComponent->GetChildComponents())
 			{
 				if (auto pSubRuntime = m_pEmitter->GetRuntimeFor(pChild))
 					pSubRuntime->Reparent(swapIds);
 			}
 		}
+
+		Container().RemoveElements(removeIds);
 	}
 }
 
@@ -603,7 +587,7 @@ void CParticleComponentRuntime::GetMaxParticleCounts(int& total, int& perFrame, 
 	total = counts.burst;
 	const float rate = counts.rate + counts.perFrame * maxFPS;
 	const float extendedLife = ComponentParams().m_maxParticleLife + rcp(minFPS); // Particles stay 1 frame after death
-	if (rate > 0.0f && std::isfinite(extendedLife))
+	if (rate > 0.0f && valueisfinite(extendedLife))
 		total += int_ceil(rate * extendedLife);
 	perFrame = int(counts.burst + counts.perFrame) + int_ceil(counts.rate / minFPS);
 
@@ -690,7 +674,7 @@ void CParticleComponentRuntime::DebugStabilityCheck()
 	for (auto id : FullRange(EDD_Spawner))
 	{
 		TParticleId parentId = parentIds.Load(id);
-		CRY_PFX2_ASSERT(parentId < parentCount);                             // this spawner is not pointing to the correct parent
+		CRY_PFX2_ASSERT(parentId < parentCount || parentId == gInvalidId);   // this spawner is not pointing to the correct parent
 	}
 #endif
 }
@@ -708,6 +692,9 @@ void CParticleComponentRuntime::AccumStats()
 	auto& stats = GetPSystem()->GetThreadData().statsCPU;
 	stats.components.alive += IsAlive();
 	stats.components.updated ++;
+	stats.spawners.alloc += Container(EDD_Spawner).Capacity();
+	stats.spawners.alive += Container(EDD_Spawner).Size();
+	stats.spawners.updated += Container(EDD_Spawner).Size();
 	stats.particles.alloc += allocParticles;
 	stats.particles.alive += aliveParticles;
 	stats.particles.updated += aliveParticles;
@@ -717,10 +704,90 @@ void CParticleComponentRuntime::AccumStats()
 	profiler.AddEntry(*this, EPS_AllocatedParticles, allocParticles);
 }
 
+pfx2::STimingParams CParticleComponentRuntime::GetMaxTimings() const
+{
+	if (m_pComponent->GetChildComponents().empty())
+		return ComponentParams();
+
+	STimingParams timings = ComponentParams();
+
+	// Adjust lifetimes to include child lifetimes
+	float maxChildEq = 0.0f, maxChildLife = 0.0f;
+	for (const auto& pChild : m_pComponent->GetChildComponents())
+	{
+		if (auto pSubRuntime = m_pEmitter->GetRuntimeFor(pChild))
+		{
+			STimingParams timingsChild = pSubRuntime->GetMaxTimings();
+			SetMax(maxChildEq, timingsChild.m_equilibriumTime);
+			SetMax(maxChildLife, timingsChild.m_maxTotalLife);
+		}
+	}
+
+	const float moreEq = maxChildEq - FiniteOr(timings.m_maxParticleLife, 0.0f);
+	if (moreEq > 0.0f)
+	{
+		timings.m_stableTime += moreEq;
+		timings.m_equilibriumTime += moreEq;
+	}
+	const float moreLife = maxChildLife - FiniteOr(timings.m_maxParticleLife, 0.0f);
+	if (moreLife > 0.0f)
+	{
+		timings.m_maxTotalLife += moreLife;
+	}
+
+	return timings;
+}
 
 pfx2::TParticleHeap& CParticleComponentRuntime::MemHeap()
 {
 	return GetPSystem()->GetThreadData().memHeap;
+}
+
+
+CRenderObject* CParticleComponentRuntime::CreateRenderObject(uint64 renderFlags) const
+{
+	CRY_PFX2_PROFILE_DETAIL;
+	const SComponentParams& params = ComponentParams();
+	CRenderObject* pRenderObject = gEnv->pRenderer->EF_GetObject();
+	auto particleMaterial = params.m_pMaterial;
+
+	pRenderObject->SetIdentityMatrix();
+	pRenderObject->m_fAlpha = 1.0f;
+	pRenderObject->m_pCurrMaterial = particleMaterial;
+	pRenderObject->m_pRenderNode = m_pEmitter;
+	pRenderObject->m_ObjFlags = ERenderObjectFlags(renderFlags & ~0xFF);
+	pRenderObject->m_RState = uint8(renderFlags);
+	pRenderObject->m_fSort = 0;
+	pRenderObject->m_pRE = gEnv->pRenderer->EF_CreateRE(eDATA_Particle);
+
+	SRenderObjData* pObjData = pRenderObject->GetObjData();
+	pObjData->m_pParticleShaderData = &params.m_shaderData;
+
+	return pRenderObject;
+}
+
+CRenderObject* CParticleComponentRuntime::GetRenderObject(uint threadId, ERenderObjectFlags extraFlags)
+{
+	// Determine needed render flags from component params, render context, and cvars
+	auto allowedRenderFlags = CParticleManager::Instance()->GetRenderFlags();
+	const SComponentParams& params = ComponentParams();
+	uint64 curRenderFlags = allowedRenderFlags & (params.m_renderObjectFlags | params.m_renderStateFlags | extraFlags);
+
+	for (;;)
+	{
+		PRenderObject& pRO = m_renderObjects[threadId].append();
+		if (pRO)
+		{
+			auto objRenderFlags = (pRO->m_ObjFlags & ~0xFF) | pRO->m_RState;
+			if (objRenderFlags == curRenderFlags)
+				return pRO;
+		}
+		else
+		{
+			pRO = CreateRenderObject(curRenderFlags);
+			return pRO;
+		}
+	}
 }
 
 float CParticleComponentRuntime::DeltaTime() const

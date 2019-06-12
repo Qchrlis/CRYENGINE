@@ -298,10 +298,10 @@ struct SJobState
 		return m_pImpl->syncVar.SetStopped(this, count);
 	}
 
-	void AddPostJob();
+	void RunPostJob();
 
-	template<typename Callback>
-	ILINE void RegisterPostJob(const char* jobName, Callback&& lambdaCallback, TPriorityLevel priority = JobManager::eRegularPriority, SJobState* pJobState = nullptr);
+	template<class TJob>
+	ILINE void RegisterPostJob(TJob&& postJobS);
 
 	// Non blocking trying to stop state, and run post job.
 	ILINE bool TryStopping()
@@ -799,6 +799,12 @@ public:
 		((CJobBase*)this)->m_JobDelegator.RegisterJobState(pJobState);
 	}
 
+	ILINE void Run(JobManager::SJobState* __restrict pJobState)
+	{
+		RegisterJobState(pJobState);
+		Run();
+	}
+
 	ILINE void Run()
 	{
 		m_JobDelegator.RunJob(m_pJobProgramData);
@@ -1285,7 +1291,7 @@ inline bool JobManager::SJobSyncVariable::SetStopped(SJobState* pPostCallback, u
 
 	// Post job needs to be added before releasing semaphore of the current job, to allow chain of post jobs to be waited on.
 	if (pPostCallback)
-		pPostCallback->AddPostJob();
+		pPostCallback->RunPostJob();
 
 	//! Do we need to release a semaphore?
 	if (currentValue.semaphoreHandle)
@@ -1408,11 +1414,15 @@ inline void JobManager::SInfoBlock::Wait(uint32 nRoundID, uint32 nMaxValue)
 }
 
 /////////////////////////////////////////////////////////////////////////////////
-inline void JobManager::SJobState::AddPostJob()
+inline void JobManager::SJobState::RunPostJob()
 {
 	// Start post job if set.
 	if (m_pImpl->m_pFollowUpJob)
-		m_pImpl->m_pFollowUpJob->Run();
+	{
+		//job is cleared after the scope to prevent infinite chaining
+		std::unique_ptr<CJobBase> job = std::move(m_pImpl->m_pFollowUpJob);
+		job->Run();
+	}
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -1427,31 +1437,18 @@ inline const bool JobManager::SJobState::Wait()
 template<typename Callback>
 inline void JobManager::IJobManager::AddLambdaJob(const char* jobName, Callback&& lambdaCallback, TPriorityLevel priority, SJobState* pJobState)
 {
-	Detail::CGenericJob<Detail::SJobLambdaFunction<>> job { jobName, std::forward<Callback>(lambdaCallback) };
+	Detail::CGenericJob<Detail::SJobLambdaFunction<>> job{ jobName, std::forward<Callback>(lambdaCallback) };
 	job.SetPriorityLevel(priority);
 	job.RegisterJobState(pJobState);
 	job.Run();
 }
 
 /////////////////////////////////////////////////////////////////////////////////
-template<typename Callback>
-ILINE void JobManager::SJobState::RegisterPostJob(const char* jobName, Callback&& lambdaCallback, TPriorityLevel priority, JobManager::SJobState* pJobState)
+template<class TJob>
+ILINE void JobManager::SJobState::RegisterPostJob(TJob&& postJob)
 {
-	auto CreateJob = [&]
-	{
-		using LambdaJobType = typename Detail::CGenericJob<Detail::SJobLambdaFunction<>>;
-		auto job = stl::make_unique<LambdaJobType>(jobName, std::forward<Callback>(lambdaCallback));
-		job->SetPriorityLevel(priority);
-		if (pJobState)
-		{
-			job->RegisterJobState(pJobState);
-		}
-		return job;
-	};
-
-	m_pImpl->m_pFollowUpJob = CreateJob();
+	m_pImpl->m_pFollowUpJob.reset(new TJob(std::forward<TJob>(postJob)));
 }
-
 
 //! Global helper function to wait for a job.
 //! Wait for a job, preempt the calling thread if the job is not done yet.

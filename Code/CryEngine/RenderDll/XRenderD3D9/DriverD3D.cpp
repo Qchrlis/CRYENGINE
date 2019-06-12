@@ -235,6 +235,13 @@ void CD3D9Renderer::ChangeViewport(CRenderDisplayContext* pDC, unsigned int view
 {
 	gRenDev->ExecuteRenderThreadCommand([=]
 	{
+		if (pDC->GetDisplayResolution() == Vec2i(viewPortOffsetX + viewportWidth, viewPortOffsetY + viewportHeight))
+			return;
+
+#ifdef _DEBUG
+		CryLog("ChangeViewport(%d, %d) from [%d, %d]", viewPortOffsetX + viewportWidth, viewPortOffsetY + viewportHeight, pDC->GetDisplayResolution()[0], pDC->GetDisplayResolution()[1]);
+#endif
+
 		// This change will propagate to the other dimensions (output and render)
 		// when HandleDisplayPropertyChanges() is called just before rendering
 		pDC->ChangeDisplayResolution(viewPortOffsetX + viewportWidth, viewPortOffsetY + viewportHeight, SRenderViewport(viewPortOffsetX, viewPortOffsetY, viewportWidth, viewportHeight));
@@ -635,9 +642,9 @@ void CD3D9Renderer::HandleDisplayPropertyChanges(std::shared_ptr<CGraphicsPipeli
 		if (CRendererResources::s_renderWidth  != renderWidth  ||
 			CRendererResources::s_renderHeight != renderHeight)
 		{
-			// The global resources are only used for the main viewport currently, but never for
-			// secondary ones, as they are forward shaded minimally without utilizing global resources
-			bChangedRendering = pDC->IsDeferredShadeable();
+			// Some of the global resources are only used for the main viewport currently
+			// Deferred shade-able resources are managed in their own graphics pipeline
+			bChangedRendering = pDC->IsMainViewport();
 
 			// Hack for editor (editor viewports will be resized earlier)
 			if (IsEditorMode() && pDC->IsMainViewport())
@@ -791,6 +798,7 @@ void CD3D9Renderer::BeginFrame(const SDisplayContextKey& displayContextKey, cons
 
 	m_cEF.mfBeginFrame();
 
+	CRenderMesh::ClearStaleMemory(true, gRenDev->GetMainThreadID());
 	CRenderElement::Tick();
 	CFlashTextureSourceSharedRT::Tick();
 
@@ -966,18 +974,18 @@ void CD3D9Renderer::RT_BeginFrame(const SDisplayContextKey& displayContextKey, c
 		m_bVolFogCloudShadowsEnabled = m_bVolFogShadowsEnabled && m_bCloudShadowsEnabled && m_cloudShadowTexId > 0 && volFogShadowEnable.y != 0 && !m_bVolumetricCloudsEnabled;
 #endif
 
-		SRainParams& rainVolParams = m_p3DEngineCommon.m_RainInfo;
+		SRainParams& rainVolParams = m_p3DEngineCommon[GetRenderThreadID()].m_RainInfo;
 		m_bDeferredRainEnabled = (rainVolParams.fAmount * CRenderer::CV_r_rainamount > 0.05f
 		                          && rainVolParams.fCurrentAmount > 0.05f
 		                          && rainVolParams.fRadius > 0.05f
 		                          && CV_r_rain > 0);
 
-		SSnowParams& snowVolParams = m_p3DEngineCommon.m_SnowInfo;
+		SSnowParams& snowVolParams = m_p3DEngineCommon[GetRenderThreadID()].m_SnowInfo;
 		m_bDeferredSnowEnabled = ((snowVolParams.m_fSnowAmount > 0.05f || snowVolParams.m_fFrostAmount > 0.05f)
 		                          && snowVolParams.m_fRadius > 0.05f
 		                          && CV_r_snow > 0);
 
-		const auto& arrOccluders = m_p3DEngineCommon.m_RainOccluders.m_arrCurrOccluders[GetRenderThreadID()];
+		const auto& arrOccluders = m_p3DEngineCommon[GetRenderThreadID()].m_RainOccluders.m_arrOccluders;
 		m_bDeferredRainOcclusionEnabled = (rainVolParams.bApplyOcclusion
 		                                   && ((CV_r_snow == 2 && m_bDeferredSnowEnabled) || (CV_r_rain == 2 && m_bDeferredRainEnabled))
 		                                   && !arrOccluders.empty());
@@ -1131,7 +1139,7 @@ void CD3D9Renderer::RT_BeginFrame(const SDisplayContextKey& displayContextKey, c
 	// Verify if water caustics needed at all
 	if (CV_r_watercaustics)
 	{
-		N3DEngineCommon::SOceanInfo& OceanInfo = gRenDev->m_p3DEngineCommon.m_OceanInfo;
+		N3DEngineCommon::SOceanInfo& OceanInfo = m_p3DEngineCommon[GetRenderThreadID()].m_OceanInfo;
 		m_bWaterCaustics = (OceanInfo.m_nOceanRenderFlags & OCR_OCEANVOLUME_VISIBLE) != 0;
 	}
 
@@ -1485,17 +1493,26 @@ float CD3D9Renderer::GetGPUFrameTime()
 
 void CD3D9Renderer::GetRenderTimes(SRenderTimes& outTimes)
 {
-	// NOTE: returning un-smoothed data, smoothed can be requested using ID "RT_COMMAND_BUF_COUNT"
-	const SRenderStatistics::SFrameSummary& rtSummary = m_pPipelineProfiler->GetFrameSummary(GetMainThreadID());
+	if (m_pPipelineProfiler && m_pPipelineProfiler->IsEnabled())
+	{
+		// NOTE: returning un-smoothed data, smoothed can be requested using ID "RT_COMMAND_BUF_COUNT"
+		const SRenderStatistics::SFrameSummary& rtSummary = m_pPipelineProfiler->GetFrameSummary(GetMainThreadID());
 
-	// Query render times on main thread
-	outTimes.fWaitForMain          = rtSummary.waitForMain;
-	outTimes.fWaitForRender        = rtSummary.waitForRender;
-	outTimes.fWaitForGPU           = rtSummary.waitForGPU;
-	outTimes.fTimeProcessedRT      = rtSummary.renderTime;
-	outTimes.fTimeProcessedRTScene = rtSummary.sceneTime;
-	outTimes.fTimeProcessedGPU     = rtSummary.gpuFrameTime;
-	outTimes.fTimeGPUIdlePercent   = rtSummary.gpuIdlePerc;
+		// Query render times on main thread
+		outTimes.fWaitForMain          = rtSummary.waitForMain;
+		outTimes.fWaitForRender        = rtSummary.waitForRender;
+		outTimes.fWaitForGPU_MT        = rtSummary.waitForGPU_MT;
+		outTimes.fWaitForGPU_RT        = rtSummary.waitForGPU_RT;
+		outTimes.fTimeProcessedRT      = rtSummary.renderTime;
+		outTimes.fTimeProcessedRTScene = rtSummary.sceneTime;
+		outTimes.fTimeProcessedGPU     = rtSummary.gpuFrameTime;
+		outTimes.fTimeGPUIdlePercent   = rtSummary.gpuIdlePerc;
+	}
+	else
+	{
+		// fall back to CRenderer which doesn't need GPU timers
+		CRenderer::GetRenderTimes(outTimes);
+	}
 }
 #endif
 
@@ -2146,7 +2163,7 @@ void CD3D9Renderer::DebugPerfBars(const SRenderStatistics& RStats, int nX, int n
 	nY += nYst + 5;
 	nX -= 5;
 
-	fWaitForGPU = (rtTimings.waitForGPU + fWaitForGPU * fSmooth) / (fSmooth + 1.0f);
+	fWaitForGPU = (rtTimings.waitForGPU_MT + rtTimings.waitForGPU_RT + fWaitForGPU * fSmooth) / (fSmooth + 1.0f);
 	IRenderAuxText::Draw2dLabel(nX, nY, fFSize, &colF.r, false, "Wait for GPU: %.3fms", fWaitForGPU * 1000.0f);
 
 	AuxDrawQuad(nX + fOffs, nY + 4, nX + fOffs + fWaitForGPU / fFrameTime * fMaxBar, nY + 12, Col_Blue, 1.0f);
@@ -3065,7 +3082,7 @@ void CD3D9Renderer::RenderAux()
 		// Render Thread will commit it's own buffer right before final rendering
 		m_pRT->ExecuteRenderThreadCommand([=/*, renderData = std::move(renderData)*/]() mutable        // Renable the capture-by-move once we support C++14..............
 		{
-			CRY_PROFILE_REGION(PROFILE_RENDERER, "CD3D9Renderer::RenderAux lambda");
+			CRY_PROFILE_SECTION(PROFILE_RENDERER, "CD3D9Renderer::RenderAux lambda");
 
 			// Renders the aux geometries collected with the collector assigned to the renderer between begin and end.
 			if (!GetS3DRend().IsStereoEnabled() || GetS3DRend().IsMenuModeEnabled())
@@ -3292,7 +3309,7 @@ void CD3D9Renderer::RT_EndFrame()
 
 		if (!IsEditorMode())
 		{
-			CRY_PROFILE_REGION(PROFILE_RENDERER, "Present");
+			CRY_PROFILE_SECTION(PROFILE_RENDERER, "Present");
 			pDC->PrePresent();
 
 #if CRY_RENDERER_GNM
@@ -3405,7 +3422,7 @@ void CD3D9Renderer::RT_EndFrame()
 		m_nFrameSwapID++;
 	}
 
-	SRenderStatistics::Write().m_Summary.waitForGPU += iTimer->GetAsyncTime().GetDifferenceInSeconds(timePresentBegin);
+	SRenderStatistics::Write().m_Summary.waitForGPU_RT += iTimer->GetAsyncTime().GetDifferenceInSeconds(timePresentBegin);
 
 #ifdef ENABLE_BENCHMARK_SENSOR
 	m_benchmarkRendererSensor->afterSwapBuffers(GetDevice(), GetDeviceContext());
@@ -3804,20 +3821,7 @@ void CD3D9Renderer::CloseCaptureFrameBufferFast(void)
 
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-// This routines uses 2 destination surfaces.  It triggers a backbuffer copy to one of its surfaces,
-// and then copies the other surface to system memory.  This hopefully will remove any
-// CPU stalls due to the rect lock call since the buffer will already be in system
-// memory when it is called
-// Inputs :
-//			pDstARGBA8			:	Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface)
-//			destinationWidth	:	Width of the frame to copy
-//			destinationHeight	:	Height of the frame to copy
-//
-//			Note :	If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions
-//					of the surface are used for the copy
-//
-bool CD3D9Renderer::CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight)
+bool CD3D9Renderer::CaptureFrameBufferFast(unsigned char* pDstRGB8, int destinationWidth, int destinationHeight)
 {
 	bool bStatus(false);
 
@@ -3856,11 +3860,11 @@ bool CD3D9Renderer::CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destina
 				// reuse stereo left and right RTs to downscale
 				CStretchRegionPass(m_pActiveGraphicsPipeline.get()).Execute(
 					pSourceTexture,
-					CRendererResources::s_ptexSceneDiffuseTmp,
+					m_pActiveGraphicsPipeline->GetPipelineResources().m_pTexSceneDiffuseTmp,
 					&srcRct, &dstRct,
 					true, ColorF(1, 1, 1, 1), 0);
 
-				pCopySourceTexture = CRendererResources::s_ptexSceneDiffuseTmp;
+				pCopySourceTexture = m_pActiveGraphicsPipeline->GetPipelineResources().m_pTexSceneDiffuseTmp;
 			}
 			else
 			{
@@ -3878,18 +3882,18 @@ bool CD3D9Renderer::CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destina
 			GetDeviceObjectFactory().GetCoreCommandList().GetCopyInterface()->Copy(pCopySourceTexture->GetDevTexture(), pTargetTexture->GetDevTexture(), region);
 
 			// Copy the previous frame from our local surface to the requested buffer location
+			// pData is in BGRA format
 			pCopyTexture->GetDevTexture()->DownloadToStagingResource(0, [&](void* pData, uint32 rowPitch, uint32 slicePitch)
 			{
 				for (unsigned int i = 0; i < height; ++i)
 				{
 					uint8* pSrc((uint8*)pData + i * rowPitch);
-					uint8* pDst((uint8*)pDstRGBA8 + i * width * 4);
-					for (unsigned int j = 0; j < width; ++j, pSrc += 4, pDst += 4)
+					uint8* pDst((uint8*)pDstRGB8 + i * width * 3);
+					for (unsigned int j = 0; j < width; ++j, pSrc += 4, pDst += 3)
 					{
 						pDst[0] = pSrc[2];
 						pDst[1] = pSrc[1];
 						pDst[2] = pSrc[0];
-						pDst[3] = 255;
 					}
 				}
 
@@ -3904,17 +3908,6 @@ bool CD3D9Renderer::CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destina
 	return bStatus;
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-// Copy a captured surface to a buffer
-//
-// Inputs :
-//			pDstARGBA8			:	Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface)
-//			destinationWidth	:	Width of the frame to copy
-//			destinationHeight	:	Height of the frame to copy
-//
-//			Note :	If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions
-//					of the surface are used for the copy
-//
 bool CD3D9Renderer::CopyFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight)
 {
 	bool bStatus(false);
@@ -3929,18 +3922,18 @@ bool CD3D9Renderer::CopyFrameBufferFast(unsigned char* pDstRGBA8, int destinatio
 	unsigned int height = std::min(destinationHeight, pCopyTexture->GetHeight());
 
 	// Copy the previous frame from our local surface to the requested buffer location
+	// pData is in BGRA format
 	pCopyTexture->GetDevTexture()->DownloadToStagingResource(0, [&](void* pData, uint32 rowPitch, uint32 slicePitch)
 	{
 		for (unsigned int i = 0; i < height; ++i)
 		{
 			uint8* pSrc((uint8*)pData + i * rowPitch);
-			uint8* pDst((uint8*)pDstRGBA8 + i * width * 4);
-			for (unsigned int j = 0; j < width; ++j, pSrc += 4, pDst += 4)
+			uint8* pDst((uint8*)pDstRGBA8 + i * width * 3);
+			for (unsigned int j = 0; j < width; ++j, pSrc += 4, pDst += 3)
 			{
 				pDst[0] = pSrc[2];
 				pDst[1] = pSrc[1];
 				pDst[2] = pSrc[0];
-				pDst[3] = 255;
 			}
 		}
 
@@ -4558,133 +4551,6 @@ void CD3D9Renderer::UpdateTextureInVideoMemory(uint32 tnum, unsigned char* newda
 {
 	CTexture* pTex = CTexture::GetByID(tnum);
 	pTex->UpdateTextureRegion(newdata, posx, posy, posz, w, h, sizez, eTFSrc);
-}
-
-bool CD3D9Renderer::EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId, int nCounter)
-{
-	CRY_PROFILE_FUNCTION(PROFILE_RENDERER);
-
-	CShader* pSH = (CShader*)pSI->m_pShader;
-
-	if (pSH && !(pSH->m_Flags & EF_NODRAW))
-	{
-		if (CShaderResources* pSR = (CShaderResources*)pSI->m_pShaderResources)
-		{
-			// Optimisations: 1) Virtual calls removed. 2) Prefetch next iteration's SEfResTexture
-			SEfResTexture* pNextResTex = NULL;
-			EEfResTextures iSlot;
-			for (iSlot = EEfResTextures(0); iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
-			{
-				pNextResTex = pSR->m_Textures[iSlot];
-				if (pNextResTex)
-				{
-					PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
-					iSlot = EEfResTextures(iSlot + 1);
-					break;
-				}
-			}
-			while (pNextResTex)
-			{
-				SEfResTexture* pResTex = pNextResTex;
-				pNextResTex = NULL;
-				for (; iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
-				{
-					pNextResTex = pSR->m_Textures[iSlot];
-					if (pNextResTex)
-					{
-						PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
-						iSlot = EEfResTextures(iSlot + 1);
-						break;
-					}
-				}
-				if (ITexture* pITex = pResTex->m_Sampler.m_pITex)
-				{
-					float minTiling = min(fabsf(pResTex->GetTiling(0)), fabsf(pResTex->GetTiling(1)));
-					int maxResolution = max(abs(pITex->GetHeight()), abs(pITex->GetWidth()));
-
-					float minMipMap = log(max(1.0f, iScreenTexels / minTiling)) / log(2.0f);
-					float maxMipMap = log(maxResolution) / log(2.0f);
-
-					float currentMipFactor = expf((maxMipMap - minMipMap) * 2.0f * 0.69314718055994530941723212145818f /*LN2*/);
-					float fMipFactor = currentMipFactor / gRenDev->GetMipDistFactor(pITex->GetHeight(), pITex->GetWidth());
-
-					CD3D9Renderer::EF_PrecacheResource(pITex, fMipFactor, 0.f, Flags, nUpdateId, nCounter);
-				}
-			}
-		}
-	}
-
-	return true;
-}
-
-bool CD3D9Renderer::EF_PrecacheResource(SShaderItem* pSI, float fMipFactorSI, float fTimeToReady, int Flags, int nUpdateId, int nCounter)
-{
-	CRY_PROFILE_FUNCTION(PROFILE_RENDERER);
-
-	CShader* pSH = (CShader*)pSI->m_pShader;
-
-	if (pSH && !(pSH->m_Flags & EF_NODRAW))
-	{
-		if (CShaderResources* pSR = (CShaderResources*)pSI->m_pShaderResources)
-		{
-			// Optimisations: 1) Virtual calls removed. 2) Prefetch next iteration's SEfResTexture
-			SEfResTexture* pNextResTex = NULL;
-			EEfResTextures iSlot;
-			for (iSlot = EEfResTextures(0); iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
-			{
-				pNextResTex = pSR->m_Textures[iSlot];
-				if (pNextResTex)
-				{
-					PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
-					iSlot = EEfResTextures(iSlot + 1);
-					break;
-				}
-			}
-			while (pNextResTex)
-			{
-				SEfResTexture* pResTex = pNextResTex;
-				pNextResTex = NULL;
-				for (; iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
-				{
-					pNextResTex = pSR->m_Textures[iSlot];
-					if (pNextResTex)
-					{
-						PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
-						iSlot = EEfResTextures(iSlot + 1);
-						break;
-					}
-				}
-				if (ITexture* pITex = pResTex->m_Sampler.m_pITex)
-				{
-					float fMipFactor = fMipFactorSI * min(fabsf(pResTex->GetTiling(0)), fabsf(pResTex->GetTiling(1)));
-					CD3D9Renderer::EF_PrecacheResource(pITex, fMipFactor, 0.f, Flags, nUpdateId, nCounter);
-				}
-			}
-		}
-	}
-
-	return true;
-}
-
-bool CD3D9Renderer::EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter)
-{
-	CRY_PROFILE_FUNCTION(PROFILE_RENDERER);
-
-	// Check for the presence of a D3D device
-	CRY_ASSERT(static_cast<const CD3D9Renderer*>(this)->GetDevice().IsValid());
-
-	if (CRenderer::CV_r_TexturesStreamingDebug)
-	{
-		const char* const sTexFilter = CRenderer::CV_r_TexturesStreamingDebugfilter->GetString();
-		if (sTexFilter != 0 && sTexFilter[0])
-			if (strstr(pTP->GetName(), sTexFilter))
-				CryLogAlways("CD3D9Renderer::EF_PrecacheResource: Mip=%5.2f nUpdateId=%4d (%s) Name=%s",
-				             fMipFactor, nUpdateId, (Flags & FPR_SINGLE_FRAME_PRIORITY_UPDATE) ? "NEAR" : "FAR", pTP->GetName());
-	}
-
-	m_pRT->RC_PrecacheResource(pTP, fMipFactor, fTimeToReady, Flags, nUpdateId, nCounter);
-
-	return true;
 }
 
 unsigned int CD3D9Renderer::UploadToVideoMemory(unsigned char* pSrcData, int w, int h, int d, ETEX_Format eSrcFormat, ETEX_Format eTFDst, int8 nummipmap, ETEX_Type eTT, bool repeat, int filter, int Id, const char* szCacheName, int flags, EEndian eEndian, RectI* pRegion, bool bAsyncDevTexCreation)
@@ -5330,7 +5196,7 @@ CRYREGISTER_SINGLETON_CLASS(CEngineModule_CryRenderer)
 //=========================================================================================
 void CD3D9Renderer::LockParticleVideoMemory(int frameId)
 {
-	CRY_PROFILE_REGION(PROFILE_RENDERER, "LockParticleVideoMemory");
+	CRY_PROFILE_SECTION(PROFILE_RENDERER, "LockParticleVideoMemory");
 
 	gcpRendD3D.GetParticleBufferSet().Lock(frameId);
 }

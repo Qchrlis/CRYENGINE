@@ -423,7 +423,7 @@ CDurangoGPUMemoryManager::AllocateResult CDurangoGPUMemoryManager::AllocatePinne
 
 			{
 				PREFAST_SUPPRESS_WARNING(6246)
-					MEMREPLAY_HIDE_BANKALLOC();
+				MEMREPLAY_HIDE_BANKALLOC();
 				hr = D3DAllocateGraphicsMemory(1ull << m_bankShift, 64 * 1024, 0, m_memType, &newBank.pBase);
 			}
 
@@ -463,6 +463,9 @@ CDurangoGPUMemoryManager::AllocateResult CDurangoGPUMemoryManager::AllocatePinne
 		pBaseAddress = (char*)bank.pBase + bankRelOffset;
 		ret.hdl = SGPUMemHdl(apr.hdl);
 		ret.baseAddress = pBaseAddress;
+#if defined(MEMREPLAY_INSTRUMENT_TEXTUREPOOL)
+		MEMREPLAY_SCOPE_ALLOC(pBaseAddress, amount, align);
+#endif
 	}
 	else if (m_allowAdditionalBanks)
 	{
@@ -471,6 +474,7 @@ CDurangoGPUMemoryManager::AllocateResult CDurangoGPUMemoryManager::AllocatePinne
 #endif
 
 		// Try and just allocate memory from D3D directly.
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "CDurangoGPUMemoryManager::AllocatePinned Overflow");
 		HRESULT hr = D3DAllocateGraphicsMemory(Align(amount, MinD3DAlignment), max(align, (size_t)MinD3DAlignment), 0, m_memType, &pBaseAddress);
 		if (!FAILED(hr))
 		{
@@ -480,12 +484,6 @@ CDurangoGPUMemoryManager::AllocateResult CDurangoGPUMemoryManager::AllocatePinne
 			m_overflowAllocationMap[pBaseAddress] = amount;
 		}
 	}
-
-#if defined(MEMREPLAY_INSTRUMENT_TEXTUREPOOL)
-	if (pBaseAddress)
-		MEMREPLAY_SCOPE_ALLOC(pBaseAddress, amount, align);
-#endif
-
 	return ret;
 }
 
@@ -534,7 +532,9 @@ void CDurangoGPUMemoryManager::FreeUnused(SGPUMemHdl hdl)
 
 		pBaseAddress = (char*)bank.pBase + bankRelOffset;
 #endif
-
+#if defined(MEMREPLAY_INSTRUMENT_TEXTUREPOOL)
+		MEMREPLAY_SCOPE_FREE(pBaseAddress);
+#endif
 		m_pAllocator->Free(daHdl);
 	}
 	else
@@ -547,10 +547,6 @@ void CDurangoGPUMemoryManager::FreeUnused(SGPUMemHdl hdl)
 		m_overflowAllocationMap.erase(pBaseAddress);
 		D3DFreeGraphicsMemory(pBaseAddress);
 	}
-
-#if defined(MEMREPLAY_INSTRUMENT_TEXTUREPOOL)
-	MEMREPLAY_SCOPE_FREE(pBaseAddress);
-#endif
 }
 
 void CDurangoGPUMemoryManager::BindContext(SGPUMemHdl hdl, CDeviceTexture* pDevTex)
@@ -966,8 +962,6 @@ void CDurangoGPUMemoryManager::QueueCopy(const CopyDesc& copy)
 
 void CDurangoGPUMemoryManager::Relocate_Int(CDeviceTexture* pDevTex, char* pOldTexBase, char* pTexBase, UINT_PTR size)
 {
-//	pDevTex->Unbind();
-
 	const SDeviceTextureDesc* pDesc = pDevTex->GetTDesc();
 
 #ifndef _RELEASE
@@ -1011,8 +1005,12 @@ void CDurangoGPUMemoryManager::ScheduleCopies(CopyDesc* descriptions, size_t nco
 
 	uint64 fence = ~0ull;
 
+	// NOTE: if the source in in WC memory this would be bad and the GPU-side copy should be used
 	if (CRenderer::CV_r_texturesstreampooldefragmentation == 2)
 	{
+		CryAutoLock<CryCriticalSection> dmaLock(GetDeviceObjectFactory().m_dma1Lock);
+		ID3D11DmaEngineContextX* pDMA = GetDeviceObjectFactory().m_pDMA1;
+
 		UINT_PTR bankRelMask = (1ull << m_bankShift) - 1;
 
 		for (size_t i = 0; i < ncopies; ++i)
@@ -1031,7 +1029,8 @@ void CDurangoGPUMemoryManager::ScheduleCopies(CopyDesc* descriptions, size_t nco
 			srcBox.right = (UINT)(srcBankOffs + copy.size);
 			srcBox.bottom = 1;
 			srcBox.back = 1;
-			gcpRendD3D->GetDeviceContext().CopySubresourceRegion(
+
+			pDMA->CopySubresourceRegion(
 				m_banks[dstBank].pBuffer,
 				0,
 				(UINT)dstBankOffs,
@@ -1039,10 +1038,12 @@ void CDurangoGPUMemoryManager::ScheduleCopies(CopyDesc* descriptions, size_t nco
 				0,
 				m_banks[srcBank].pBuffer,
 				0,
-				&srcBox);
+				&srcBox,
+				D3D11_COPY_NO_OVERWRITE);
 		}
 
-		fence = gcpRendD3D->GetPerformanceDeviceContext().InsertFence();
+		fence = pDMA->InsertFence(D3D11_INSERT_FENCE_NO_KICKOFF);
+		pDMA->Submit();
 
 		for (size_t i = 0; i < ncopies; ++i)
 		{
@@ -1063,8 +1064,10 @@ void CDurangoGPUMemoryManager::ScheduleCopies(CopyDesc* descriptions, size_t nco
 		for (size_t i = 0; i < ncopies; ++i)
 		{
 			CopyDesc &copy = descriptions[i];
+			void* pSrc = GetPhysicalAddress(copy.src);
 			void* pDst = GetPhysicalAddress(copy.dst);
-			memcpy(pDst, GetPhysicalAddress(copy.src), copy.size);
+
+			memcpy(pDst, pSrc, copy.size);
 
 #if defined(TEXTURES_IN_CACHED_MEM)
 			D3DFlushCpuCache(pDst, copy.size);
@@ -1088,6 +1091,14 @@ CDurangoGPURingMemAllocator::CDurangoGPURingMemAllocator()
 {
 }
 
+CDurangoGPURingMemAllocator::~CDurangoGPURingMemAllocator()
+{
+	if (m_pCPUAddr)
+	{
+		D3DFreeGraphicsMemory(m_pCPUAddr);
+	}
+}
+
 bool CDurangoGPURingMemAllocator::Init(ID3D11DmaEngineContextX* pContext, uint32 size)
 {
 #ifndef _RELEASE
@@ -1097,6 +1108,7 @@ bool CDurangoGPURingMemAllocator::Init(ID3D11DmaEngineContextX* pContext, uint32
 	}
 #endif
 
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CDurangoGPURingMemAllocator");
 	HRESULT hr = D3DAllocateGraphicsMemory(
 		size,
 		BaseAlignment,
@@ -1344,17 +1356,25 @@ HRESULT CDeviceObjectFactory::BeginTileFromLinear2D(CDeviceTexture* pDst, const 
 
 		if (!bSrcInGPUMemory || (pDstAddr <= pLinSurfaceSrc && pLinSurfaceSrc < pDstAddrEnd))
 		{
-			pRingAllocBase = m_textureStagingRing.BeginAllocate((uint32)pLyt->SizeBytes, (uint32)pLyt->BaseAlignmentBytes, allocCtxs[nAllocCtxs++]);
-			if (!pRingAllocBase)
+			if (CRendererCVars::CV_r_TexturesStagingRingEnabled)
 			{
+				pRingAllocBase = m_textureStagingRing.BeginAllocate((uint32)pLyt->SizeBytes, (uint32)pLyt->BaseAlignmentBytes, allocCtxs[nAllocCtxs++]);
+				if (!pRingAllocBase)
+				{
 #ifndef _RELEASE
-				__debugbreak();
+					__debugbreak();
 #endif
 
-				return E_OUTOFMEMORY;
-			}
+					return E_OUTOFMEMORY;
+				}
 
-			pGPUSrcAddr = pRingAllocBase;
+				pGPUSrcAddr = pRingAllocBase;
+			}
+			else
+			{
+				CryFatalError("Tried to use the texture staging ring while it was disabled!\n"
+				              "enabling r_TexturesStagingRingEnabled will resolve this but consume r_TexturesStagingRingSize MB additional memory.");
+			}
 		}
 		else
 		{
@@ -1430,7 +1450,15 @@ HRESULT CDeviceObjectFactory::BeginTileFromLinear2D(CDeviceTexture* pDst, const 
 
 	for (size_t i = 0; i < nAllocCtxs; ++i)
 	{
-		m_textureStagingRing.EndAllocate(allocCtxs[i], fence);
+		if (CRendererCVars::CV_r_TexturesStagingRingEnabled)
+		{
+			m_textureStagingRing.EndAllocate(allocCtxs[i], fence);
+		}
+		else
+		{
+			CryFatalError("Tried to use the texture staging ring while it was disabled!\n"
+			              "enabling r_TexturesStagingRingEnabled will resolve this but consume r_TexturesStagingRingSize MB additional memory.");
+		}
 	}
 
 	fenceOut = fence;

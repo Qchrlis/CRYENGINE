@@ -83,11 +83,11 @@ public:
 	virtual int         CreateResources();
 	virtual void        Release();
 
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual void        Render();
 	void                RenderObjectsVelocity();
 
 	virtual void        Reset(bool bOnSpecChange = false);
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        OnBeginFrame(const SRenderingPassInfo& passInfo);
 
 	static void         SetupObject(CRenderObject* pObj, const SRenderingPassInfo& passInfo);
@@ -133,7 +133,8 @@ private:
 	typedef VectorMap<uintptr_t, SObjMotionBlurParams> OMBParamsMap;
 	typedef OMBParamsMap::iterator                     OMBParamsMapItor;
 	static OMBParamsMap m_pOMBData[3]; // triple buffering: t0: being written, t-1: current render frame, t-2: previous render frame
-	static CThreadSafeRendererContainer<OMBParamsMap::value_type> m_FillData[RT_COMMAND_BUF_COUNT];
+
+	static CryMT::CThreadSafePushContainer<OMBParamsMap::value_type> m_FillData[RT_COMMAND_BUF_COUNT];
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -206,11 +207,11 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual void        Render();
 
 	SDepthOfFieldParams GetParams();
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -276,8 +277,8 @@ public:
 	virtual int  Initialize();
 	virtual void Release();
 	virtual void OnLostDevice();
-	virtual bool Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void Render();
 	virtual void Reset(bool bOnSpecChange = false);
 
 	bool         IsVisible();
@@ -319,8 +320,8 @@ public:
 		AddParamFloat("FilterSharpening_Amount", m_pAmount, 1.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -348,8 +349,8 @@ public:
 		AddParamFloat("FilterBlurring_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -411,8 +412,8 @@ public:
 		AddParamFloatNoTransition("FilterArtifacts_GrainTile", m_pGrainTile, 1.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -503,8 +504,8 @@ public:
 		AddParamFloatNoTransition("ColorGrading_GrainAmount_Offset", m_pGrainAmountOffset, 0.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	void                UpdateParams(SColorGradingMergeParams& pMergeParams);
 
@@ -564,8 +565,8 @@ public:
 
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -598,8 +599,8 @@ public:
 		AddParamInt("VolumetricScattering_Quality", m_pQuality, 1); // 0 = low, 1 = med, 2= high, 3= ultra-high, 4= crazy high, and so on
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -628,8 +629,8 @@ public:
 		AddParamVec4NoTransition("clr_AlienInterference_Color", m_pTintColor, Vec4(Vec3(0.85f, 0.95f, 1.25f) * 0.5f, 1.0f));
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -658,8 +659,8 @@ public:
 		AddParamFloat("WaterDroplets_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -686,8 +687,8 @@ public:
 		AddParamFloat("WaterFlow_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -717,8 +718,8 @@ public:
 		m_fRandOffset = 0;
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -765,8 +766,8 @@ public:
 	}
 
 	virtual int         CreateResources();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual void        Release();
 
@@ -863,8 +864,8 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -915,8 +916,8 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	void                UpdateSoundEvents();
@@ -982,8 +983,8 @@ public:
 
 	virtual int  CreateResources();
 	virtual void Release();
-	virtual bool Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void Render();
 	virtual void Reset(bool bOnSpecChange = false);
 
 	void         AmbientPass();
@@ -1076,8 +1077,8 @@ public:
 		FindIfSilhouettesOptimisedTechAvailable();
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -1137,9 +1138,9 @@ public:
 		Release();
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Release();
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -1171,8 +1172,8 @@ public:
 
 	virtual int         CreateResources()                                                                                        { return 1; }
 	virtual void        Release()                                                                                                {}
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline) { return true; }
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo) { return true; }
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false)                                                                        {}
 
 	virtual const char* GetName() const
@@ -1195,8 +1196,8 @@ public:
 		m_nID = EPostEffectID::PostStereo;
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
 	{
@@ -1220,8 +1221,8 @@ public:
 		m_bInit = true;
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
 	{
@@ -1291,7 +1292,7 @@ class CHud3D : public CPostEffect
 
 public:
 
-	typedef CThreadSafeRendererContainer<SHudData> SHudDataVec;
+	typedef CryMT::CThreadSafePushContainer<SHudData> SHudDataVec;
 
 public:
 
@@ -1359,14 +1360,14 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 
 	virtual void        Update();
 	virtual void        OnBeginFrame(const SRenderingPassInfo& passInfo);
 
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual void        AddRE(const CRenderElement* re, const SShaderItem* pShaderItem, CRenderObject* pObj, const SRenderingPassInfo& passInfo);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual void        Render();
 
 	void                FlashUpdateRT();
 	void                UpdateBloomRT(CTexture* pDstRT, CTexture* pBlurDst);
@@ -1388,7 +1389,7 @@ public:
 
 private:
 	// Shared shader params/textures setup
-	void CalculateProjMatrix(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	void CalculateProjMatrix();
 	void SetShaderParams(SHudData& pData);
 	void SetTextures(SHudData& pData);
 	void RenderMesh(const CRenderElement* pRE, SShaderPass* pPass);
@@ -1470,8 +1471,8 @@ public:
 	}
 
 	virtual int         Initialize();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -1550,8 +1551,8 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -1619,8 +1620,8 @@ public:
 		AddParamVec4("ScreenBlood_Border", m_pBorder, Vec4(0.0f, 0.0f, 2.0f, 1.0f)); // Border: x=xOffset y=yOffset z=range w=alpha
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
 	{
@@ -1646,8 +1647,8 @@ public:
 		AddParamVec4("ScreenFader_Color", m_pColor, Vec4(0.0f, 0.0f, 0.0f, 0.0f));  // Fader color
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
 	{
@@ -1715,8 +1716,8 @@ public:
 		m_deferDisableFrameCountDown = 0;
 	}
 
-	virtual bool        Preprocess(const SRenderViewInfo& viewInfo, const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
-	virtual void        Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const

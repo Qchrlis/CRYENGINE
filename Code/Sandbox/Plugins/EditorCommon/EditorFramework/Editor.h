@@ -33,9 +33,9 @@ public:
 	CEditor(QWidget* pParent = nullptr, bool bIsOnlyBackend = false);
 	virtual ~CEditor();
 
-	virtual void        Initialize();
+	virtual void            Initialize();
 
-	virtual const char* GetEditorName() const = 0;
+	virtual const char*     GetEditorName() const = 0;
 
 	// Editor orientation when using adaptive layouts
 	Qt::Orientation         GetOrientation() const        { return m_currentOrientation; }
@@ -142,7 +142,7 @@ protected:
 	void               SetPersonalizationState(const QVariantMap& state);
 	const QVariantMap& GetPersonalizationState();
 
-	// Must be overridden to add handling of adaptive layous. Adaptive layouts enables editor owners to make better use of space
+	// Must be overridden to add handling of adaptive layouts. Adaptive layouts enables editor owners to make better use of space
 	virtual bool SupportsAdaptiveLayout() const  { return false; }
 	bool         IsAdaptiveLayoutEnabled() const { return SupportsAdaptiveLayout() && m_isAdaptiveLayoutEnabled; }
 	// Triggered on resize for editors that support adaptive layouts
@@ -162,61 +162,15 @@ protected:
 	virtual bool IsOnlyBackend() const { return m_bIsOnlybackend; }
 
 	//File menu methods
-	virtual bool OnNew()                         { return false; }
-	virtual bool OnNewFolder()                   { return false; }
-	virtual bool OnOpen()                        { return false; }
 	virtual bool OnOpenFile(const QString& path) { CRY_ASSERT(0); return false; }
-	virtual bool OnImport()                      { return false; }
-	virtual bool OnRefresh()                     { return false; }
-	virtual bool OnReload()                      { return false; }
-	virtual bool OnClose()                       { return false; }
-	virtual bool OnSave()                        { return false; }
-	virtual bool OnSaveAs()                      { return false; }
 
 	//Edit menu methods
-	virtual bool OnUndo()   { return false; }
-	virtual bool OnRedo()   { return false; }
-	virtual bool OnCopy()   { return false; }
-	virtual bool OnCut()    { return false; }
-	virtual bool OnPaste()  { return false; }
-	virtual bool OnDelete() { return false; }
 	virtual bool OnFind()   { return false; }
 	//By default, these call OnFind.
 	//if FindNext() is called before Find(), it is expected that the Find functionnality is called instead
 	virtual bool OnFindPrevious() { return OnFind(); }
 	virtual bool OnFindNext()     { return OnFind(); }
-	virtual bool OnDuplicate()    { return false; }
 	virtual bool OnHelp();
-
-	// Context sensitive item operations
-	virtual bool OnSelectAll()         { return false; }
-	virtual bool OnRename()            { return false; }
-	// Locking
-	virtual bool OnLock()              { return false; }
-	virtual bool OnUnlock()            { return false; }
-	virtual bool OnToggleLock()        { return false; }
-	virtual bool OnIsolateLocked()     { return false; }
-	// Visibility
-	virtual bool OnHide()              { return false; }
-	virtual bool OnUnhide()            { return false; }
-	virtual bool OnToggleHide()        { return false; }
-	virtual bool OnIsolateVisibility() { return false; }
-
-	// Context sensitive hierarchical operations
-	virtual bool OnCollapseAll()        { return false; }
-	virtual bool OnExpandAll()          { return false; }
-	// Locking
-	virtual bool OnLockChildren()       { return false; }
-	virtual bool OnUnlockChildren()     { return false; }
-	virtual bool OnToggleLockChildren() { return false; }
-	// Visibility
-	virtual bool OnHideChildren()       { return false; }
-	virtual bool OnUnhideChildren()     { return false; }
-	virtual bool OnToggleHideChildren() { return false; }
-
-	//View menu methods
-	virtual bool OnZoomIn()  { return false; }
-	virtual bool OnZoomOut() { return false; }
 
 	//! Returns the default action for a command from editor's menu.
 	QCommandAction* GetMenuAction(MenuItems item);
@@ -233,7 +187,7 @@ protected:
 	//! Use this method to register all possible dockable widgets for this editor
 	//! isUnique: only one of these widgets can be spawned
 	//! isInternal: the widget is not in the menu
-	void RegisterDockableWidget(QString name, std::function<QWidget* ()> factory, bool isUnique = false, bool isInternal = false);
+	void RegisterDockableWidget(QString name, std::function<QWidget*()> factory, bool isUnique = false, bool isInternal = false);
 
 	//! Implement this method and use CDockableContainer::SpawnWidget to define the default layout
 	virtual void CreateDefaultLayout(CDockableContainer* sender) { CRY_ASSERT_MESSAGE(false, "Not implemented"); }
@@ -258,12 +212,12 @@ public:
 	CCrySignal<void(Qt::Orientation)> signalAdaptiveLayoutChanged;
 
 protected:
-	CBroadcastManager* m_broadcastManager;
-	bool               m_bIsOnlybackend;
-	QMenu*             m_pPaneMenu;
+	CBroadcastManager*  m_broadcastManager;
+	bool                m_bIsOnlybackend;
+	QMenu*              m_pPaneMenu;
+	CDockableContainer* m_dockingRegistry;
 
 private:
-	CDockableContainer*                         m_dockingRegistry;
 	QObject*                                    m_pBroadcastManagerFilter;
 	CEditorContent*                             m_pEditorContent;
 	std::unique_ptr<MenuDesc::CDesc<MenuItems>> m_pMenuDesc;
@@ -292,6 +246,11 @@ public:
 	virtual void        SetState(const QVariantMap& state) final { SetLayout(state); }
 	virtual void        LoadLayoutPersonalization();
 	virtual void        SaveLayoutPersonalization();
+
+	virtual std::vector<IPane*> GetSubPanes() const override 
+	{ 
+		return m_dockingRegistry ? m_dockingRegistry->GetPanes() : std::vector<IPane*>();
+	}
 
 	//! Brings this Editor on top of all otherWindows
 	void Raise();

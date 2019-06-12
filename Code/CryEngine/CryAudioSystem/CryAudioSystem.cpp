@@ -9,6 +9,7 @@
 #include <CrySystem/IEngineModule.h>
 #include <CryExtension/ICryFactory.h>
 #include <CryExtension/ClassWeaver.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	#include <CryGame/IGameFramework.h>
@@ -80,12 +81,15 @@ class CEngineModule_CryAudioSystem : public ISystemModule
 		if (CreateAudioSystem(env))
 		{
 #if CRY_PLATFORM_DURANGO
-			// Do this before initializing the audio middleware!
-			HRESULT const result = ApuCreateHeap(static_cast<UINT32>(g_cvars.m_fileCacheManagerSize << 10));
-
-			if (result != S_OK)
 			{
-				CryFatalError("<Audio>: AudioSystem failed to allocate APU heap! (%d byte)", g_cvars.m_fileCacheManagerSize << 10);
+				// Do this before initializing the audio middleware!
+				MEMSTAT_CONTEXT(EMemStatContextType::AudioSystem, "AudioSystem ApuCreateHeap");
+				HRESULT const result = ApuCreateHeap(static_cast<UINT32>(g_cvars.m_fileCacheManagerSize << 10));
+
+				if (result != S_OK)
+				{
+					CryFatalError("<Audio>: AudioSystem failed to allocate APU heap! (%d byte)", g_cvars.m_fileCacheManagerSize << 10);
+				}
 			}
 #endif  // CRY_PLATFORM_DURANGO
 
@@ -209,7 +213,7 @@ CEngineModule_CryAudioSystem::CEngineModule_CryAudioSystem()
 		gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(&g_system, "CryAudio::CSystem");
 	}
 
-	m_pImplNameCVar = REGISTER_STRING_CB(g_implCVarName, "CryAudioImplSDLMixer", 0,
+	m_pImplNameCVar = REGISTER_STRING_CB(g_szImplCVarName, "CryAudioImplSDLMixer", 0,
 	                                     "Holds the name of the audio implementation library to be used.\n"
 	                                     "Usage: s_ImplName <name of the library without extension>\n"
 	                                     "Default: CryAudioImplSDLMixer\n",
@@ -221,7 +225,7 @@ CEngineModule_CryAudioSystem::~CEngineModule_CryAudioSystem()
 {
 	if (gEnv->pConsole != nullptr)
 	{
-		gEnv->pConsole->UnregisterVariable(g_implCVarName);
+		gEnv->pConsole->UnregisterVariable(g_szImplCVarName);
 	}
 
 	if (gEnv->pSystem != nullptr)

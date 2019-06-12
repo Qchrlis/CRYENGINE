@@ -6,10 +6,8 @@
 #include <EditorFramework/Editor.h>
 #include <CrySystem/ISystem.h>
 
+class QAction;
 class QCommandAction;
-class QLabel;
-class QToolBar;
-class QVBoxLayout;
 
 namespace ACE
 {
@@ -69,16 +67,18 @@ private:
 	virtual void closeEvent(QCloseEvent* pEvent) override;
 	// ~QWidget
 
+	bool OnReload();
+	bool OnRefresh();
+	bool OnSave();
+
 	// CEditor
-	virtual bool OnReload() override;
-	virtual bool OnRefresh() override;
-	virtual bool OnSave() override;
 	virtual void CreateDefaultLayout(CDockableContainer* pSender) override;
 	virtual bool CanQuit(std::vector<string>& unsavedChanges) override;
 	// ~CEditor
 
 	void                   InitMenu();
 	void                   UpdateState();
+	void                   RegisterActions();
 	void                   RegisterWidgets();
 	void                   Reload(bool const hasImplChanged = false);
 	void                   SaveBeforeImplChange();
@@ -95,6 +95,7 @@ private:
 	QCommandAction*           m_pSaveAction;
 	QCommandAction*           m_pRefreshAction;
 	QCommandAction*           m_pReloadAction;
+	QAction*                  m_pPreferencesAction;
 	CFileMonitorSystem* const m_pMonitorSystem;
 	bool                      m_isModified;
 	bool                      m_isReloading;

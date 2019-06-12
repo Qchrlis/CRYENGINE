@@ -26,7 +26,7 @@ void CLensOpticsStage::Execute()
 
 	if (!lensOpticsElements.empty())
 	{
-		CTexture* pDestRT = CRendererResources::s_ptexSceneTargetR11G11B10F[0];
+		CTexture* pDestRT = m_graphicsPipelineResources.m_pTexSceneTargetR11G11B10F[0];
 
 		D3DViewPort viewport;
 		viewport.TopLeftX = viewport.TopLeftY = 0.0f;
@@ -72,7 +72,7 @@ void CLensOpticsStage::Execute()
 				continue;
 
 			{
-				PROFILE_LABEL_SCOPE(pLight->m_sName && pLight->m_sName[0] != '\0' ? pLight->m_sName : "unknown");
+				PROFILE_LABEL_SCOPE_DYNAMIC((pLight->m_sName && pLight->m_sName[0] != '\0' ? pLight->m_sName : "unknown"), "LIGHT");
 
 				pRootElem->SetOcclusionQuery(pOcc);
 				pOcc->SetOccPlaneSizeRatio(pRootElem->GetOccSize());
@@ -125,7 +125,7 @@ void CLensOpticsStage::Execute()
 					flareLight.m_fViewAngleFalloff = 0.0;
 				}
 
-				if (pRootElem->ProcessAll(m_passLensOptics, prePasses, flareLight, viewInfo, viewInfoCount, false, bUpdateOcclusion))
+				if (pRootElem->ProcessAll(&m_graphicsPipeline, m_passLensOptics, prePasses, flareLight, viewInfo, viewInfoCount, false, bUpdateOcclusion))
 				{
 					if (bUpdateOcclusion)
 					{

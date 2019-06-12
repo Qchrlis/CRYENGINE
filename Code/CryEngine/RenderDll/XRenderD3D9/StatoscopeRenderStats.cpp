@@ -6,6 +6,7 @@
 #include "PipelineProfiler.h"
 #include <CryNetwork/INetwork.h>
 #include "StatoscopeRenderStats.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if ENABLE_STATOSCOPE
 
@@ -323,7 +324,7 @@ void CPerformanceOverviewDG::Write(IStatoscopeFrameRecord& fr)
 	fr.AddValue(profilingCostMs);
 	fr.AddValue(frameLengthMs - profilingCostMs);
 	fr.AddValue((frameLengthSec - renderTimes.fWaitForRender) * 1000.0f);
-	fr.AddValue((renderTimes.fTimeProcessedRT - renderTimes.fWaitForGPU) * 1000.f);
+	fr.AddValue((renderTimes.fTimeProcessedRT - renderTimes.fWaitForGPU_MT - renderTimes.fWaitForGPU_RT) * 1000.f);
 	fr.AddValue(gEnv->pRenderer->GetGPUFrameTime() * 1000.0f);
 	fr.AddValue(netPerformance.m_threadTime * 1000.0f);
 	fr.AddValue(numDrawCalls + numShadowDrawCalls);

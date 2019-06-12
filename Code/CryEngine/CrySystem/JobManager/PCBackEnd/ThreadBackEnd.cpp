@@ -22,6 +22,7 @@ JobManager::ThreadBackEnd::CThreadBackEnd::CThreadBackEnd()
 ///////////////////////////////////////////////////////////////////////////////
 JobManager::ThreadBackEnd::CThreadBackEnd::~CThreadBackEnd()
 {
+	ShutDown();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -273,7 +274,7 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 			m_pTempWorkerInfo->doWorkLock.Lock();
 			while (!m_pTempWorkerInfo->doWork && !m_bStop)
 			{
-				//CRY_PROFILE_REGION(PROFILE_SYSTEM, "TempWorker - In DISABLED state");
+				//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "TempWorker - In DISABLED state");
 				m_pTempWorkerInfo->doWorkCnd.Wait(m_pTempWorkerInfo->doWorkLock);
 			}
 			m_pTempWorkerInfo->doWorkLock.Unlock();
@@ -282,7 +283,7 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 
 		{
 
-			//CRY_PROFILE_REGION(PROFILE_SYSTEM, "Get Job (Normal)");
+			//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "Get Job (Normal)");
 
 			///////////////////////////////////////////////////////////////////////////
 			// multiple steps to get a job of the queue
@@ -332,14 +333,14 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 			if (hasJob)
 			{
 				// We got a job, reduce the counter
-				//CRY_PROFILE_REGION(PROFILE_SYSTEM, "Aquire");
+				//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "Aquire");
 				m_rWorkSyncVar.Aquire();
 			}
 			else
 			{
 				// Wait for new work
 				{
-					//CRY_PROFILE_REGION(PROFILE_SYSTEM, "Wait for work");
+					//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "Wait for work");
 					// We failed to get a job. Check if there is still work available or wait for new work
 					m_rWorkSyncVar.Wait();
 				}
@@ -359,7 +360,7 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 				JobManager::detail::SJobQueueSlotState* pJobInfoBlockState = &m_rJobQueue.jobInfoBlockStates[nPriorityLevel][nJobSlot];
 				while (!pJobInfoBlockState->IsReady())
 				{
-					//CRY_PROFILE_REGION(PROFILE_SYSTEM, "JobWorkerThread: About to sleep");
+					//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "JobWorkerThread: About to sleep");
 					CrySleep(0);
 				}
 
@@ -379,7 +380,7 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 
 		}
 
-		//CRY_PROFILE_REGION(PROFILE_SYSTEM, "JobWorkerThread: Execute Job");
+		//CRY_PROFILE_SECTION(PROFILE_SYSTEM, "JobWorkerThread: Execute Job");
 
 		///////////////////////////////////////////////////////////////////////////
 		// now we have a valid SInfoBlock to start work on it
@@ -400,12 +401,18 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 #endif
 
 		{
+#if CAPTURE_REPLAY_LOG || defined(ENABLE_PROFILING_CODE)
+			const char* cpJobName = pJobManager->GetJobName(infoBlock.jobInvoker);
+#endif
 #if defined(ENABLE_PROFILING_CODE)
-			SProfilingSection profSection(GetTrackerForName(pJobManager->GetJobName(infoBlock.jobInvoker)), nullptr);
+			SProfilingSection profSection(GetTrackerForName(cpJobName), nullptr);
 #endif
 			uint64 nJobStartTicks = CryGetTicks();
-			// call delegator function to invoke job entry
-			(*infoBlock.jobInvoker)(infoBlock.GetParamAddress());
+			{
+				MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Job: %s", cpJobName);
+				// call delegator function to invoke job entry
+				(*infoBlock.jobInvoker)(infoBlock.GetParamAddress());
+			}
 			
 			nTicksInJobExecution += CryGetTicks() - nJobStartTicks;
 		}

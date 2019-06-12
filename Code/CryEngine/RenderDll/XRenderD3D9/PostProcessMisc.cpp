@@ -21,7 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void CVolumetricScattering::Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline)
+void CVolumetricScattering::Render()
 {
 	ASSERT_LEGACY_PIPELINE
 /*
@@ -98,7 +98,7 @@ void CVolumetricScattering::Render(const std::shared_ptr<CGraphicsPipeline>& pGr
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-void CPost3DRenderer::Render(const std::shared_ptr<CGraphicsPipeline>& pGraphicsPipeline)
+void CPost3DRenderer::Render()
 {
 	ASSERT_LEGACY_PIPELINE
 /*
@@ -176,18 +176,7 @@ void CPost3DRenderer::GammaCorrection(float screenRect[4])
 
 void CPost3DRenderer::RenderSilhouettes(uint8 groupId, float screenRect[4])
 {
-	PROFILE_LABEL_SCOPE("SILHOUTTES");
-
-	RenderMeshes(groupId, screenRect, eRMM_Custom);
-
-	CTexture* pOutlineTex = CRendererResources::s_ptexDisplayTargetScaled[0];
-	CTexture* pGlowTex = CRendererResources::s_ptexDisplayTargetScaled[1];
-
-	ApplyShaderQuality();
-	SilhouetteOutlines(pOutlineTex, pGlowTex);
-	SilhouetteGlow(pOutlineTex, pGlowTex);
-	SilhouetteCombineBlurAndOutline(pOutlineTex, pGlowTex);
-	GammaCorrection(screenRect);
+	ASSERT_LEGACY_PIPELINE
 }
 
 void CPost3DRenderer::SilhouetteCombineBlurAndOutline(CTexture* pOutlineTex, CTexture* pGlowTex)

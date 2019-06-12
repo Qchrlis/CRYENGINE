@@ -131,8 +131,8 @@ enum E3DEngineParameter
 
 	E3DPARAM_SKY_SKYBOX_ANGLE,
 	E3DPARAM_SKY_SKYBOX_STRETCHING,
-	E3DPARAM_SKY_SKYBOX_EXPOSURE,
-	E3DPARAM_SKY_SKYBOX_OPACITY,
+	E3DPARAM_SKY_SKYBOX_EMITTANCE,
+	E3DPARAM_SKY_SKYBOX_FILTER,
 
 	EPARAM_SUN_SHAFTS_VISIBILITY,
 
@@ -1037,10 +1037,10 @@ struct IFoliage
 //! Sky rendering
 enum eSkyType // Maps to "e_SkyType" CVar
 {
-	eSkyType_Sky    = 0,
-	eSkyType_HDRSky = 1,
+	eSkySpec_Low = 0,
+	eSkySpec_Def = 1,
 
-	eSkyType_NumSkyTypes,
+	eSkySpec_NumSkySpecs,
 };
 
 struct SSkyLightRenderParams
@@ -2095,19 +2095,17 @@ struct I3DEngine : public IProcess
 
 	//////////////////////////////////////////////////////////////////////////
 	// Sky
-	virtual bool IsSkyVisible() = 0;
+	virtual bool IsSkyVisible() const = 0;
 	virtual eSkyType GetSkyType() const = 0;
+
+	//! Updates sky parameters from specified material
+	virtual IMaterial* GetSkyMaterial() const = 0;
+	virtual void SetSkyMaterial(IMaterial* pSkyMat, eSkyType type) = 0;
 
 	virtual const SSkyLightRenderParams* GetSkyLightRenderParams() const = 0;
 	
-	virtual string GetSkyDomeTextureName() const = 0;
-	virtual void   SetSkyDomeTextureName(string name) = 0;
-
 	virtual string GetMoonTextureName() const = 0;
 	virtual void   SetMoonTextureName(string name) = 0;
-
-	//! Updates sky parameters from specified material
-	virtual void SetSkyMaterial(IMaterial* pSkyMat, eSkyType type) = 0;
 
 	//! Sets global 3d engine parameter.
 	virtual void SetGlobalParameter(E3DEngineParameter param, const Vec3& v) = 0;
@@ -2363,7 +2361,7 @@ enum EFileTypes
 //! Common header for binary files used by 3dengine.
 struct SCommonFileHeader
 {
-	void Set(uint16 t, uint16 v)   { cry_strcpy(signature, "CRY"); file_type = (uint8)t; version = v; }
+	void Set(uint16 t, uint16 v)   { cry_fixed_size_strcpy(signature, "CRY"); file_type = (uint8)t; version = v; }
 	bool Check(uint16 t, uint16 v) { return strcmp(signature, "CRY") == 0 && t == file_type && v == version; }
 
 	char   signature[4];                //!< File signature, should be "CRY ".
@@ -3071,7 +3069,7 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateShadowPassRenderingInfo(cons
 		else
 			passInfo.m_eShadowMapRendering = SHADOW_MAP_GSM;
 	}
-	else if (nLightFlags & (DLF_POINT | DLF_PROJECT | DLF_AREA_LIGHT))
+	else if (nLightFlags & (DLF_POINT | DLF_PROJECT | DLF_AREA))
 		passInfo.m_eShadowMapRendering = static_cast<uint8>(SHADOW_MAP_LOCAL);
 	else
 		passInfo.m_eShadowMapRendering = static_cast<uint8>(SHADOW_MAP_NONE);

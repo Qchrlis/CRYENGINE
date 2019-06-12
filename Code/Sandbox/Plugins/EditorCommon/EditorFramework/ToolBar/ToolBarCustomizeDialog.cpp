@@ -194,6 +194,9 @@ void CToolBarCustomizeDialog::QDropContainer::AddItem(const QVariant& itemVarian
 
 void CToolBarCustomizeDialog::QDropContainer::AddCommand(const CCommand* pCommand, int idx /* = -1*/)
 {
+	if (!m_pCurrentToolBarDesc)
+		return;
+
 	m_pCurrentToolBarDesc->InsertCommand(pCommand, idx);
 	UpdateToolBar();
 }
@@ -277,6 +280,8 @@ void CToolBarCustomizeDialog::QDropContainer::SetCurrentToolBarDesc(std::shared_
 
 void CToolBarCustomizeDialog::QDropContainer::BuildPreview()
 {
+	std::shared_ptr<CToolBarService::QItemDesc> pSelectedItem = m_pSelectedItem;
+
 	if (m_pCurrentToolBar)
 	{
 		selectedItemChanged(nullptr);
@@ -292,6 +297,12 @@ void CToolBarCustomizeDialog::QDropContainer::BuildPreview()
 
 	m_pCurrentToolBar = CreateToolBar(m_pCurrentToolBarDesc->GetName(), m_pCurrentToolBarDesc);
 	m_pPreviewLayout->addWidget(m_pCurrentToolBar);
+
+	if (pSelectedItem && m_pCurrentToolBarDesc && m_pCurrentToolBarDesc->GetItems().contains(pSelectedItem))
+	{
+		m_pSelectedItem = pSelectedItem;
+		selectedItemChanged(pSelectedItem);
+	}
 }
 
 void CToolBarCustomizeDialog::QDropContainer::ShowContextMenu(const QPoint& position)
@@ -324,6 +335,11 @@ void CToolBarCustomizeDialog::QDropContainer::ShowContextMenu(const QPoint& posi
 
 void CToolBarCustomizeDialog::QDropContainer::SetSelectedActionIcon(const char* szIconPath)
 {
+	if (!m_pSelectedItem)
+	{
+		return;
+	}
+
 	if (m_pSelectedItem->GetType() == CToolBarService::QItemDesc::Command)
 	{
 		std::static_pointer_cast<CToolBarService::QCommandDesc>(m_pSelectedItem)->SetIcon(szIconPath);
@@ -389,7 +405,7 @@ bool CToolBarCustomizeDialog::QDropContainer::eventFilter(QObject* pObject, QEve
 
 void CToolBarCustomizeDialog::QDropContainer::mouseMoveEvent(QMouseEvent* pEvent)
 {
-	if (!m_pSelectedItem || !m_bDragStarted || !(pEvent->buttons() & Qt::LeftButton))
+	if (!m_pCurrentToolBar && !m_pSelectedItem || !m_bDragStarted || !(pEvent->buttons() & Qt::LeftButton))
 		return;
 
 	if ((pEvent->pos() - m_DragStartPosition).manhattanLength() < QApplication::startDragDistance())
@@ -413,6 +429,11 @@ void CToolBarCustomizeDialog::QDropContainer::mouseMoveEvent(QMouseEvent* pEvent
 
 void CToolBarCustomizeDialog::QDropContainer::dragEnterEvent(QDragEnterEvent* pEvent)
 {
+	if (!m_pCurrentToolBar)
+	{
+		return;
+	}
+
 	const CDragDropData* pDragDropData = CDragDropData::FromMimeData(pEvent->mimeData());
 
 	if (pDragDropData->HasCustomData(GetToolBarItemMimeType()) || pDragDropData->HasCustomData(CCommandModel::GetCommandMimeType()))
@@ -1119,6 +1140,7 @@ void CToolBarCustomizeDialog::OnContextMenu(const QPoint& position) const
 
 	QMenu* menu = new QMenu();
 	QAction* pAction = menu->addAction("Add");
+	pAction->setEnabled(!m_pToolbarSelect->GetCurrentText().isEmpty());
 
 	connect(pAction, &QAction::triggered, [this, pCommand]()
 	{

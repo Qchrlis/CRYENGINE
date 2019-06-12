@@ -154,7 +154,6 @@ struct SSystemCVars
 	int sys_simple_http_base_port;
 #endif
 
-	int     sys_log_asserts;
 	int     sys_error_debugbreak;
 
 	int     sys_enable_crash_handler;
@@ -177,8 +176,6 @@ struct SSystemCVars
 #endif
 
 	int sys_vr_support;
-
-	int memReplayRecordCallstacks;
 };
 extern SSystemCVars g_cvars;
 
@@ -342,9 +339,10 @@ public:
 #ifdef CRY_TESTING
 	CryTest::ITestSystem*        GetITestSystem() override            { return m_pTestSystem.get(); }
 #endif
-	IUserAnalyticsSystem*        GetIUserAnalyticsSystem() override;
-	Cry::IPluginManager*         GetIPluginManager() override;
-	Cry::IProjectManager*        GetIProjectManager() override;
+	IUserAnalyticsSystem*         GetIUserAnalyticsSystem() override;
+	Cry::IPluginManager*          GetIPluginManager() override;
+	Cry::IProjectManager*         GetIProjectManager() override;
+	virtual Cry::UDR::IUDRSystem* GetIUDR() override                 { return m_env.pUDR; }
 
 	IResourceManager*            GetIResourceManager() override;
 	ITextModeConsole*            GetITextModeConsole() override;
@@ -561,7 +559,6 @@ private:
 	void UnloadSchematycModule();
 	//@}
 
-	void Strange();
 	bool ParseSystemConfig(string& sFileName);
 
 	//////////////////////////////////////////////////////////////////////////
@@ -674,7 +671,6 @@ private: // ------------------------------------------------------
 	bool               m_bInDevMode;            //!< Set to true if was in dev mode.
 	bool               m_bGameFolderWritable;   //!< True when verified that current game folder have write access.
 	SDefaultValidator* m_pDefaultValidator;     //!<
-	int                m_nStrangeRatio;         //!<
 	string             m_sDelayedScreeenshot;   //!< to delay a screenshot call for a frame
 	CCpuFeatures*      m_pCpu;                  //!< CPU features
 	int                m_ttMemStatSS;           //!< Time to memstat screenshot
@@ -937,12 +933,6 @@ public:
 
 #if defined(USE_CRY_ASSERT)
 	virtual void OnAssert(const char* condition, const char* message, const char* fileName, unsigned int fileLineNumber) override;
-
-	virtual bool IsAssertDialogVisible() const override;
-	virtual bool AreAssertsEnabledForModule(uint32 moduleId) override;
-	virtual void DisableAssertionsForModule(uint32 moduleId) override;
-
-	virtual void SetAssertVisible(bool bAssertVisble) override;
 #endif
 
 	virtual void ClearErrorMessages() override
@@ -1012,12 +1002,6 @@ protected: // -------------------------------------------------------------
 
 	std::unordered_map<uint32, bool> m_mapWarningOnceAlreadyPrinted;
 	CryMutex                         m_mapWarningOnceMutex;
-
-#if defined(USE_CRY_ASSERT)
-	bool                   m_isAsserting = false;
-	// Used to check if CryAssert is enabled for a specific module
-	std::bitset<eCryM_Num> m_disabledAssertModules;
-#endif
 
 	friend struct SDefaultValidator;
 	friend struct SCryEngineFoldersLoader;

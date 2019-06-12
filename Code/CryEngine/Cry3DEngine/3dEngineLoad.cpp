@@ -126,7 +126,7 @@ bool C3DEngine::InitLevelForEditor(const char* szFolderName, const char* szMissi
 	CRY_ASSERT_MESSAGE(0, "InitLevelForEditor not supported on consoles yet");
 	return false;
 #else
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	m_bInUnload = false;
 	m_bEditor = true;
@@ -220,13 +220,13 @@ bool C3DEngine::InitLevelForEditor(const char* szFolderName, const char* szMissi
 
 bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "C3DEngine::LoadTerrain");
 
 	PrintMessage("===== Loading %s =====", COMPILED_HEIGHT_MAP_FILE_NAME);
 
 	// open file
-	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rbx");
+	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rb");
 	if (!f)
 		return 0;
 
@@ -273,12 +273,12 @@ bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppS
 
 bool C3DEngine::LoadVisAreas(std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	PrintMessage("===== Loading %s =====", COMPILED_VISAREA_MAP_FILE_NAME);
 
 	// open file
-	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_VISAREA_MAP_FILE_NAME), "rbx");
+	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_VISAREA_MAP_FILE_NAME), "rb");
 	if (!f)
 		return false;
 
@@ -313,7 +313,7 @@ bool C3DEngine::LoadVisAreas(std::vector<struct IStatObj*>** ppStatObjTable, std
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::UnloadLevel()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (m_pLevelLoadTimeslicer)
 	{
@@ -444,9 +444,8 @@ void C3DEngine::UnloadLevel()
 
 	CleanLevelShaders();
 
-	stl::free_container(m_SkyDomeTextureName[0]);
 	stl::free_container(m_MoonTextureName);
-	for (int skyTypeIdx = 0; skyTypeIdx < eSkyType_NumSkyTypes; ++skyTypeIdx)
+	for (int skyTypeIdx = 0; skyTypeIdx < eSkySpec_NumSkySpecs; ++skyTypeIdx)
 		SAFE_RELEASE(m_pSkyMat[skyTypeIdx]);
 
 	if (m_pCloudShadowTex.get())
@@ -604,8 +603,8 @@ void C3DEngine::UnloadLevel()
 
 	//////////////////////////////////////////////////////////////////////////
 	// clear data used for SRenderingPass
-	stl::free_container(m_RenderingPassCameras[0]);
-	stl::free_container(m_RenderingPassCameras[1]);
+	m_RenderingPassCameras[0].reset_container();
+	m_RenderingPassCameras[1].reset_container();
 	stl::free_container(m_deferredRenderProxyStreamingPriorityUpdates);
 
 	for (auto& pFr : m_lstCustomShadowFrustums)
@@ -695,7 +694,7 @@ C3DEngineLevelLoadTimeslicer::~C3DEngineLevelLoadTimeslicer()
 
 I3DEngine::ELevelLoadStatus C3DEngineLevelLoadTimeslicer::DoStep()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 #if !defined(SYS_ENV_AS_STRUCT)
 	PREFAST_ASSUME(gEnv);
@@ -1027,7 +1026,7 @@ bool C3DEngineLevelLoadTimeslicer::ShouldPreloadLevelObjects() const
 
 bool C3DEngine::LoadLevel(const char* szFolderName, XmlNodeRef missionXml)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	C3DEngineLevelLoadTimeslicer slicer(*this, szFolderName, std::move(missionXml));
 	ELevelLoadStatus result;
@@ -1063,7 +1062,7 @@ I3DEngine::ELevelLoadStatus C3DEngine::UpdateLoadLevelStatus()
 		return ELevelLoadStatus::Failed;
 	}
 
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	switch (m_pLevelLoadTimeslicer->DoStep())
 	{
@@ -1212,7 +1211,7 @@ XmlNodeRef C3DEngine::OpenMissionDataXML(const char* szMissionName)
 
 void C3DEngine::LoadMissionDataFromXMLNode(const char* szMissionName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!m_pTerrain)
 	{
@@ -1327,12 +1326,14 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode)
 	m_fTerrainDetailMaterialsViewDistRatio = fTerrainDetailMaterialsViewDistRatio;
 
 	// SkyBox
-	const string hdrSkyMatName = GetXMLAttribText(pInputNode, "SkyBox", "Material", "");
-	const string skyMatName = GetXMLAttribText(pInputNode, "SkyBox", "MaterialLowSpec", "");
-	m_pSkyMat[eSkyType_HDRSky] = hdrSkyMatName.empty() ? NULL : GetMatMan()->LoadMaterial(hdrSkyMatName.c_str(), false);
-	m_pSkyMat[eSkyType_Sky] = skyMatName.empty() ? NULL : GetMatMan()->LoadMaterial(skyMatName.c_str(), false);
+	const string defSkyMatName = GetXMLAttribText(pInputNode, "SkyBox", "Material", "");
+	const string lowSkyMatName = GetXMLAttribText(pInputNode, "SkyBox", "MaterialLowSpec", "");
+	m_pSkyMat[eSkySpec_Def] = defSkyMatName.empty() ? nullptr : GetMatMan()->LoadMaterial(defSkyMatName.c_str(), false);
+	m_pSkyMat[eSkySpec_Low] = lowSkyMatName.empty() ? nullptr : GetMatMan()->LoadMaterial(lowSkyMatName.c_str(), false);
+	if (!m_pSkyMat[eSkySpec_Low])
+		m_pSkyMat[eSkySpec_Low] = m_pSkyMat[eSkySpec_Def];
 
-	m_fSkyBoxAngle[0] = (float)atof(GetXMLAttribText(pInputNode, "SkyBox", "Angle", "0.0"));
+	m_fSkyBoxAngle = (float)atof(GetXMLAttribText(pInputNode, "SkyBox", "Angle", "0.0"));
 	m_fSkyBoxStretching = (float)atof(GetXMLAttribText(pInputNode, "SkyBox", "Stretching", "1.0"));
 
 	// set terrain water, sun road and bottom shaders
@@ -1360,6 +1361,7 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode)
 	m_oceanCausticDepth = (float) atof(GetXMLAttribText(pInputNode, "Ocean", "CausticDepth", "8.0"));
 	m_oceanCausticIntensity = (float) atof(GetXMLAttribText(pInputNode, "Ocean", "CausticIntensity", "1.0"));
 
+	UpdateSkyParams();
 	UpdateWindParams();
 
 	// Per-level merged meshes pool size (on consoles)
@@ -1554,6 +1556,22 @@ void C3DEngine::UpdateMoonParams()
 	UpdateMoonDirection();
 }
 
+void C3DEngine::UpdateSkyParams()
+{
+	const auto& sky = GetTimeOfDay()->GetSkyParams();
+
+	// Selective overwrite
+	if (!sky.materialDefSpec.empty())
+		m_pSkyMat[eSkySpec_Def] = GetMatMan()->LoadMaterial(sky.materialDefSpec.c_str(), false);
+	else
+		m_pSkyMat[eSkySpec_Def] = nullptr;
+
+	if (!sky.materialLowSpec.empty())
+		m_pSkyMat[eSkySpec_Low] = GetMatMan()->LoadMaterial(sky.materialLowSpec.c_str(), false);
+	else
+		m_pSkyMat[eSkySpec_Low] = m_pSkyMat[eSkySpec_Def];
+}
+
 void C3DEngine::UpdateWindParams()
 {
 	const auto& wind = GetTimeOfDay()->GetWindParams();
@@ -1598,7 +1616,7 @@ void C3DEngine::LoadTimeOfDaySettingsFromXML(XmlNodeRef node)
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::LoadParticleEffects(const char* szFolderName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (m_pPartManager)
 	{
@@ -1646,7 +1664,7 @@ bool C3DEngine::RestoreTerrainFromDisk()
 	{
 		m_pTerrain->ResetTerrainVertBuffers(NULL);
 
-		if (FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rbx"))
+		if (FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rb"))
 		{
 			GetTerrain()->ReloadModifiedHMData(f);
 			GetPak()->FClose(f);
@@ -1687,7 +1705,7 @@ void C3DEngine::ReRegisterKilledVegetationInstances()
 //////////////////////////////////////////////////////////////////////////
 bool C3DEngine::LoadUsedShadersList()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "LoadUsedShadersList");
 
@@ -1699,7 +1717,7 @@ bool C3DEngine::LoadUsedShadersList()
 //////////////////////////////////////////////////////////////////////////
 bool C3DEngine::PrecreateDecals()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "PrecreateDecals");
 
 	CObjManager::DecalsToPrecreate& decals(GetObjManager()->m_decalsToPrecreate);
@@ -1733,7 +1751,7 @@ bool C3DEngine::PrecreateDecals()
 void C3DEngine::PostLoadLevel()
 {
 	MEMSTAT_CONTEXT(EMemStatContextType::Other, "PostLoadLevel");
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Submit water material to physics

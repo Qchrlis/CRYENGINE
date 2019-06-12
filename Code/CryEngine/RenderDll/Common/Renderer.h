@@ -4,6 +4,7 @@
 
 #include <CryMemory/CryPool/PoolAlloc.h>
 #include <CryThreading/IJobManager.h>
+#include <CryThreading/CryThreadSafePushContainer.h>
 #include <concqueue/concqueue.hpp>
 #include "TextMessages.h"
 #include "RenderAuxGeom.h"
@@ -121,11 +122,16 @@ const float TANGENT30_2 = 0.57735026918962576450914878050196f * 2;   // 2*tan(30
 #define TEXMAXANISOTROPY_DEFAULT_VAL          8
 #if CRY_PLATFORM_DESKTOP
 	#define TEXNOANISOALPHATEST_DEFAULT_VAL     0
-	#define SHADERS_ALLOW_COMPILATION_DEFAULT_VAL 1
 #else
 	#define TEXNOANISOALPHATEST_DEFAULT_VAL     1
-	#define SHADERS_ALLOW_COMPILATION_DEFAULT_VAL 0
 #endif
+
+#if CRY_PLATFORM_CONSOLE && defined(_RELEASE)
+#define SHADERS_ALLOW_COMPILATION_DEFAULT_VAL 0
+#else
+#define SHADERS_ALLOW_COMPILATION_DEFAULT_VAL 1
+#endif
+
 #define ENVTEXRES_DEFAULT_VAL                 3
 #define WATERREFLQUAL_DEFAULT_VAL             4
 #define DOF_DEFAULT_VAL                       2
@@ -408,6 +414,24 @@ struct SOceanInfo
 	uint8 m_nOceanRenderFlags = 0;
 };
 
+struct SSkyInfo
+{
+	bool                  m_bIsVisible;
+	bool                  m_bApplySkyDome;
+	bool                  m_bApplySkyBox;
+
+	float                 m_fSkyBoxStretching;
+
+	// These params can be overridden by the sky material
+	float                 m_fSkyBoxAngle;
+	float                 m_fSkyBoxMultiplier;
+	Vec3                  m_vSkyBoxEmittance;
+	Vec3                  m_vSkyBoxFilter;
+
+	_smart_ptr<IMaterial> m_pSkyMaterial;
+	_smart_ptr<CTexture>  m_pSkyBoxTexture;
+};
+
 struct SVisAreaInfo
 {
 	SVisAreaInfo() : nFlags(0)
@@ -428,21 +452,15 @@ typedef std::vector<SRainOccluder> ArrOccluders;
 struct SRainOccluders
 {
 	ArrOccluders m_arrOccluders;
-	ArrOccluders m_arrCurrOccluders[RT_COMMAND_BUF_COUNT];
 	size_t       m_nNumOccluders;
 	bool         m_bProcessed[MAX_GPU_NUM];
 
 	SRainOccluders() : m_nNumOccluders(0) { for (int i = 0; i < MAX_GPU_NUM; ++i) m_bProcessed[i] = true; }
-	~SRainOccluders()                                                  { Release(); }
-	void Release(bool bAll = false)
+	~SRainOccluders() { Release(); }
+	void Release()
 	{
 		stl::free_container(m_arrOccluders);
 		m_nNumOccluders = 0;
-		if (bAll)
-		{
-			for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-				stl::free_container(m_arrCurrOccluders[i]);
-		}
 		for (int i = 0; i < MAX_GPU_NUM; ++i) m_bProcessed[i] = true;
 	}
 };
@@ -483,6 +501,7 @@ struct S3DEngineCommon
 	};
 
 	N3DEngineCommon::SVisAreaInfo   m_pCamVisAreaInfo;
+	N3DEngineCommon::SSkyInfo       m_SkyInfo;
 	N3DEngineCommon::SOceanInfo     m_OceanInfo;
 	N3DEngineCommon::SRainOccluders m_RainOccluders;
 	N3DEngineCommon::SCausticInfo   m_CausticInfo;
@@ -490,6 +509,7 @@ struct S3DEngineCommon
 	SSnowParams                     m_SnowInfo;
 
 	void Update(const SRenderingPassInfo& passInfo);
+	void UpdateSkyInfo(const SRenderingPassInfo& passInfo);
 	void UpdateRainInfo(const SRenderingPassInfo& passInfo);
 	void UpdateRainOccInfo(const SRenderingPassInfo& passInfo);
 	void UpdateSnowInfo(const SRenderingPassInfo& passInfo);
@@ -555,7 +575,8 @@ struct CRY_ALIGN(128) SRenderStatistics
 
 		float waitForMain = 0;
 		float waitForRender = 0;
-		float waitForGPU = 0;
+		float waitForGPU_MT = 0;
+		float waitForGPU_RT = 0;
 		float gpuIdlePerc = 0;
 
 		float gpuFrameTime = 0.0166667f;
@@ -1009,10 +1030,14 @@ public:
 
 	virtual IOpticsElementBase* CreateOptics(EFlareType type) const override;
 
-	virtual bool                EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags) override;
-	virtual bool                EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter) override = 0;
-	virtual bool                EF_PrecacheResource(IRenderMesh* pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) override;
-	virtual bool                EF_PrecacheResource(SRenderLight* pLS, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) override;
+	virtual bool                EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(SRenderLight* pLS, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(IRenderShaderResources* pShaderResources, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(IRenderShaderResources* pShaderResources, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(SShaderItem* pSI, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
+	virtual bool                EF_PrecacheResource(IRenderMesh* pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId) final;
 
 	// functions for handling particle jobs which cull particles and generate their vertices/indices
 	virtual void EF_AddMultipleParticlesToScene(const SAddParticlesToSceneJob* jobs, size_t numJobs, const SRenderingPassInfo& passInfo) override;
@@ -1064,7 +1089,7 @@ public:
 
 	virtual void         EF_InvokeShadowMapRenderJobs(const SRenderingPassInfo& passInfo, const int nFlags) override {}
 	virtual IRenderView* GetNextAvailableShadowsView(IRenderView* pMainRenderView, ShadowMapFrustum* pOwnerFrustum) override;
-	void                 PrepareShadowFrustumForShadowPool(ShadowMapFrustum* pFrustum, uint32 frameID, const SRenderLight& light, uint32* timeSlicedShadowsUpdated) override final;
+	void                 PrepareShadowFrustumForShadowPool(IRenderView* pMainRenderView, ShadowMapFrustum* pFrustum, uint32 frameID, const SRenderLight& light, uint32* timeSlicedShadowsUpdated) override final;
 
 	// 2d interface for shaders
 	virtual void EF_EndEf2D(const bool bSort) override = 0;
@@ -1076,17 +1101,13 @@ public:
 
 	virtual int                    EF_AddDeferredLight(const SRenderLight& pLight, float fMult, const SRenderingPassInfo& passInfo) override;
 
-	virtual void                   EF_ReleaseDeferredData() override;
+	virtual void                   EF_ReleaseDeferredData(CGraphicsPipeline* pGraphicsPipeline) override;
 	virtual SInputShaderResources* EF_CreateInputShaderResource(IRenderShaderResources* pOptionalCopyFrom = nullptr) override;
 	virtual void                   ClearPerFrameData(const SRenderingPassInfo& passInfo);
 	virtual bool                   EF_UpdateDLight(SRenderLight* pDL) const override;
 	void                           EF_CheckLightMaterial(SRenderLight* pLight, uint16 nRenderLightID, const SRenderingPassInfo& passInfo);
 
 	virtual void                   EF_QueryImpl(ERenderQueryTypes eQuery, void* pInOut0, uint32 nInOutSize0, void* pInOut1, uint32 nInOutSize1) override;
-
-	//////////////////////////////////////////////////////////////////////////
-	// Deferred ambient passes
-	virtual void Ef_AddDeferredGIClipVolume(const IRenderMesh* pClipVolume, const Matrix34& mxTransform) override;
 
 	//////////////////////////////////////////////////////////////////////////
 	// Post processing effects interfaces
@@ -1192,7 +1213,7 @@ public:
 	virtual void                                      SetDefaultMaterials(IMaterial* pDefMat, IMaterial* pTerrainDefMat) override                          { m_pDefaultMaterial = pDefMat; m_pTerrainDefaultMaterial = pTerrainDefMat; }
 	virtual byte*                                     GetTextureSubImageData32(byte* pData, int nDataSize, int nX, int nY, int nW, int nH, CTexture* pTex) { return 0; }
 
-	virtual void                                      PrecacheTexture(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter = 1);
+	void                                              PrecacheTexture(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId);
 
 	virtual SSkinningData*                            EF_CreateSkinningData(IRenderView* pRenderView, uint32 nNumBones, bool bNeedJobSyncVar) override;
 	virtual SSkinningData*                            EF_CreateRemappedSkinningData(IRenderView* pRenderView, uint32 nNumBones, SSkinningData* pSourceSkinningData, uint32 nCustomDataSize, uint32 pairGuid) override;
@@ -1286,10 +1307,9 @@ public:
 	static size_t        GetTexturesStreamPoolSize();
 
 protected:
-	void EF_AddParticle(CREParticle* pParticle, SShaderItem& shaderItem, CRenderObject* pRO, const SRenderingPassInfo& passInfo);
 	void EF_RemoveParticlesFromScene();
 	void PrepareParticleRenderObjects(Array<const SAddParticlesToSceneJob> aJobs, int nREStart, const SRenderingPassInfo& passInfo);
-	void EF_GetParticleListAndBatchFlags(uint32& nBatchFlags, ERenderListID& nList, CRenderObject* pRenderObject, const SShaderItem& shaderItem, const SRenderingPassInfo& passInfo);
+	void EF_GetParticleListAndBatchFlags(uint32& nBatchFlags, ERenderListID& nList, const CRenderObject* pRenderObject, const SShaderItem& shaderItem);
 
 	void FreePermanentRenderObjects(int bufferId);
 
@@ -1432,8 +1452,6 @@ public:
 	int   m_overrideScanlineOrder;
 #endif
 
-	int       m_nStencilMaskRef;
-
 	byte      m_bDeviceSupportsInstancing;
 
 	uint32    m_bDeviceSupports_AMDExt;
@@ -1549,7 +1567,7 @@ public:
 	bool                   m_bCollectDrawCallsInfo;
 	bool                   m_bCollectDrawCallsInfoPerNode;
 
-	S3DEngineCommon        m_p3DEngineCommon;
+	S3DEngineCommon        m_p3DEngineCommon[RT_COMMAND_BUF_COUNT];
 
 	ShadowFrustumMGPUCache m_ShadowFrustumMGPUCache;
 
@@ -1575,7 +1593,6 @@ public:
 	// Limit for local sorting array
 	static const int      nMaxParticleContainer = 8 * 1024;
 
-	int                   m_nCREParticleCount[RT_COMMAND_BUF_COUNT];
 	JobManager::SJobState m_ComputeVerticesJobState;
 
 	CFillRateManager      m_FillRateManager;
@@ -1644,12 +1661,12 @@ protected:
 	{
 		std::shared_ptr<class CRenderObjectsPools> m_renderObjectsPools;
 		// Array of render objects that need to be deleted next frame
-		CThreadSafeRendererContainer<class CPermanentRenderObject*> m_persistentRenderObjectsToDelete[RT_COMMAND_BUF_COUNT];
+		CryMT::CThreadSafePushContainer<class CPermanentRenderObject*> m_persistentRenderObjectsToDelete[RT_COMMAND_BUF_COUNT];
 	};
 	STempObjects m_tempRenderObjects;
 
 	// Resource deletion is delayed for at least 3 frames.
-	CThreadSafeRendererContainer<CBaseResource*> m_resourcesToDelete[RT_COMMAND_BUF_COUNT];
+	CryMT::CThreadSafePushContainer<CBaseResource*> m_resourcesToDelete[RT_COMMAND_BUF_COUNT];
 	volatile int m_currentResourceDeleteBuffer = 0;
 
 	// rounds ID from 3D engine, useful for texture streaming

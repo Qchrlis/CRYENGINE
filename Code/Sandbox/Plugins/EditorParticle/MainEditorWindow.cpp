@@ -65,7 +65,6 @@
 REGISTER_EDITOR_AND_SCRIPT_KEYBOARD_FOCUS_COMMAND(particle, show_options, CCommandDescription("Shows effect options"))
 REGISTER_EDITOR_UI_COMMAND_DESC(particle, show_options, "Show Effect Options", "", "icons:General/Options.ico", false)
 
-
 REGISTER_EDITOR_AND_SCRIPT_KEYBOARD_FOCUS_COMMAND(particle, get_from_selection, CCommandDescription("Loads effect from selected entity"))
 REGISTER_EDITOR_UI_COMMAND_DESC(particle, get_from_selection, "Load from Selected Entity", "", "icons:General/Get_From_Selection.ico", false)
 
@@ -99,19 +98,25 @@ CParticleEditor::CParticleEditor()
 {
 	setAttribute(Qt::WA_DeleteOnClose);
 	setObjectName(GetEditorName());
+	RegisterActions();
+}
 
-	RegisterAction("particle.show_options", &CParticleEditor::OnShowEffectOptions);
+void CParticleEditor::RegisterActions()
+{
+	RegisterAction("general.copy", &CParticleEditor::OnCopy);
+	RegisterAction("general.paste", &CParticleEditor::OnPaste);
+	RegisterAction("general.delete", &CParticleEditor::OnDelete);
+	RegisterAction("general.import", &CParticleEditor::OnImport);
+	RegisterAction("general.undo", &CParticleEditor::OnUndo);
+	RegisterAction("general.redo", &CParticleEditor::OnRedo);
+	m_pReloadEffectMenuAction = RegisterAction("general.reload", &CParticleEditor::OnReload);
+
+	m_pShowEffectOptionsMenuAction = RegisterAction("particle.show_options", &CParticleEditor::OnShowEffectOptions);
 	RegisterAction("particle.get_from_selection", &CParticleEditor::OnLoadFromSelectedEntity);
 	RegisterAction("particle.assign_to_selection", &CParticleEditor::OnApplyToSelectedEntity);
 
-	RegisterDockingWidgets();
-}
-
-void CParticleEditor::Initialize()
-{
-	CDockableEditor::Initialize();
-
-	InitMenu();
+	m_pReloadEffectMenuAction->setEnabled(false);
+	m_pShowEffectOptionsMenuAction->setEnabled(false);
 }
 
 void CParticleEditor::InitMenu()
@@ -126,12 +131,6 @@ void CParticleEditor::InitMenu()
 		CAbstractMenu* const pFileMenu = GetMenu(CEditor::MenuItems::FileMenu);
 
 		int sec;
-
-		m_pReloadEffectMenuAction = GetAction("general.reload");
-		m_pReloadEffectMenuAction->setEnabled(false);
-		m_pShowEffectOptionsMenuAction = GetAction("particle.show_options");
-		m_pShowEffectOptionsMenuAction->setEnabled(false);
-
 		sec = pFileMenu->GetNextEmptySection();
 		pFileMenu->AddAction(m_pReloadEffectMenuAction, sec);
 		pFileMenu->AddAction(m_pShowEffectOptionsMenuAction, sec);
@@ -143,16 +142,10 @@ void CParticleEditor::InitMenu()
 		sec = pFileMenu->GetNextEmptySection();
 		pFileMenu->AddAction(GetAction("general.import"), sec);
 	}
-
-	// Enable instant editing if possible
-	CAbstractMenu* const pEditMenu = GetMenu(CEditor::MenuItems::EditMenu);
-	pEditMenu->AddCommandAction(m_pLockAction);
 }
 
-void CParticleEditor::RegisterDockingWidgets()
+void CParticleEditor::OnInitialize()
 {
-	EnableDockingSystem();
-
 	RegisterDockableWidget(s_szEffectGraphName, [=]() { return new CEffectAssetWidget(m_pEffectAssetModel.get(), this); }, false, false);
 	RegisterDockableWidget(s_szEffectTreeName, [=]() { return new CEffectPanel(m_pEffectAssetModel.get(), this); }, false, false);
 	RegisterDockableWidget(s_szCurveEditorPanelName, [=]() { return CreateCurveEditorPanel(this); }, false, false);
@@ -162,6 +155,8 @@ void CParticleEditor::RegisterDockingWidgets()
 	// Similar to the object properties, the property trees should be reverted when a feature item
 	// signals SignalInvalidated.
 	RegisterDockableWidget(s_szInspectorName, [&]() { return new CInspectorLegacy(this); }, true, false);
+
+	InitMenu();
 }
 
 bool CParticleEditor::OnUndo()
@@ -174,17 +169,6 @@ bool CParticleEditor::OnRedo()
 {
 	GetIEditor()->GetIUndoManager()->Redo();
 	return true;
-}
-
-void CParticleEditor::SetLayout(const QVariantMap& state)
-{
-	CEditor::SetLayout(state);
-}
-
-QVariantMap CParticleEditor::GetLayout() const
-{
-	QVariantMap state = CEditor::GetLayout();
-	return state;
 }
 
 void CParticleEditor::Serialize(Serialization::IArchive& archive)
@@ -204,11 +188,6 @@ bool CParticleEditor::OnOpenAsset(CAsset* pAsset)
 		return true;
 	}
 	return false;
-}
-
-bool CParticleEditor::OnSaveAsset(CEditableAsset& editAsset)
-{
-	return GetAssetBeingEdited()->GetEditingSession()->OnSaveAsset(editAsset);
 }
 
 void CParticleEditor::OnDiscardAssetChanges(CEditableAsset& editAsset)
@@ -276,10 +255,10 @@ bool CParticleEditor::OnAboutToCloseAsset(string& reason) const
 	return !strncmp(&newPfx[0], &oldPfx[0], newPfx.size());
 }
 
-void CParticleEditor::CreateDefaultLayout(CDockableContainer* pSender)
+void CParticleEditor::OnCreateDefaultLayout(CDockableContainer* pSender, QWidget* pAssetBrowser)
 {
 	CRY_ASSERT(pSender);
-	pSender->SpawnWidget(s_szCurveEditorPanelName);
+	pSender->SpawnWidget(s_szCurveEditorPanelName, pAssetBrowser, QToolWindowAreaReference::VSplitRight);
 	pSender->SpawnWidget(s_szEffectGraphName, QToolWindowAreaReference::HSplitTop);
 	pSender->SpawnWidget(s_szInspectorName, QToolWindowAreaReference::VSplitRight);
 }
@@ -464,28 +443,28 @@ void CParticleEditor::OnShowEffectOptions()
 		return;
 
 	PopulateLegacyInspectorEvent popEvent([this, pEffect](CInspectorLegacy& inspector)
-	{
-		QAdvancedPropertyTree* pPropertyTree = new QAdvancedPropertyTree(pEffect->GetName());
-		// WORKAROUND: Serialization of features doesn't work with the default style.
-		//						 We either need to fix serialization or property tree. As soon as it's
-		//						 done use the commented out code below.
-		PropertyTreeStyle treeStyle(pPropertyTree->treeStyle());
-		treeStyle.propertySplitter = false;
-		pPropertyTree->setTreeStyle(treeStyle);
-		pPropertyTree->setSizeToContent(true);
-		// ~WORKAROUND
-		//pPropertyTree->setExpandLevels(2);
-		//pPropertyTree->setValueColumnWidth(0.6f);
-		//pPropertyTree->setAutoRevert(false);
-		//pPropertyTree->setAggregateMouseEvents(false);
-		//pPropertyTree->setFullRowContainers(true);
-		pPropertyTree->attach(pEffect->GetEffectOptionsSerializer());
-		QObject::connect(pPropertyTree, &QPropertyTree::signalChanged, this, &CParticleEditor::OnEffectOptionsChanged);
+	    {
+	                                      QAdvancedPropertyTree* pPropertyTree = new QAdvancedPropertyTree(pEffect->GetName());
+	                                      // WORKAROUND: Serialization of features doesn't work with the default style.
+	                                      //						 We either need to fix serialization or property tree. As soon as it's
+	                                      //						 done use the commented out code below.
+	                                      PropertyTreeStyle treeStyle(pPropertyTree->treeStyle());
+	                                      treeStyle.propertySplitter = false;
+	                                      pPropertyTree->setTreeStyle(treeStyle);
+	                                      pPropertyTree->setSizeToContent(true);
+	                                      // ~WORKAROUND
+	                                      //pPropertyTree->setExpandLevels(2);
+	                                      //pPropertyTree->setValueColumnWidth(0.6f);
+	                                      //pPropertyTree->setAutoRevert(false);
+	                                      //pPropertyTree->setAggregateMouseEvents(false);
+	                                      //pPropertyTree->setFullRowContainers(true);
+	                                      pPropertyTree->attach(pEffect->GetEffectOptionsSerializer());
+	                                      QObject::connect(pPropertyTree, &QPropertyTree::signalChanged, this, &CParticleEditor::OnEffectOptionsChanged);
 
-		QCollapsibleFrame* pInspectorWidget = new QCollapsibleFrame("Particle Effect");
-		pInspectorWidget->SetWidget(pPropertyTree);
-		inspector.AddWidget(pInspectorWidget);
-	});
+	                                      QCollapsibleFrame* pInspectorWidget = new QCollapsibleFrame("Particle Effect");
+	                                      pInspectorWidget->SetWidget(pPropertyTree);
+	                                      inspector.AddWidget(pInspectorWidget);
+			});
 
 	GetBroadcastManager().Broadcast(popEvent);
 }

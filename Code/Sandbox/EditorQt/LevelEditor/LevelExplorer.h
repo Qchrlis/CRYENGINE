@@ -9,6 +9,7 @@
 
 // EditorCommon
 #include <EditorFramework/Editor.h>
+#include <LevelEditor/ILevelExplorerContext.h>
 
 class QAdvancedTreeView;
 class QFilteringPanel;
@@ -24,7 +25,7 @@ class QToolButton;
 struct CLayerChangeEvent;
 struct CObjectEvent;
 
-class CLevelExplorer final : public CDockableEditor
+class CLevelExplorer final : public CDockableEditor, public ILevelExplorerContext
 {
 	Q_OBJECT
 
@@ -37,7 +38,6 @@ public:
 	virtual const char* GetEditorName() const override { return "Level Explorer"; }
 	virtual void        SetLayout(const QVariantMap& state) override;
 	virtual QVariantMap GetLayout() const override;
-	virtual void        customEvent(QEvent* event) override;
 	//////////////////////////////////////////////////////////////////////////
 
 	enum ModelType
@@ -60,7 +60,13 @@ public:
 
 	std::vector<CObjectLayer*> GetSelectedObjectLayers() const;
 
+	virtual void GetSelection(std::vector<IObjectLayer*>& layers, std::vector<IObjectLayer*>& layerFolders) const override;
+
+	virtual std::vector<IObjectLayer*> GetSelectedIObjectLayers() const override;
+
 protected:
+	virtual const IEditorContext* GetContextObject() const override { return this; };
+
 	// Adaptive layouts enables editor owners to make better use of space
 	bool            SupportsAdaptiveLayout() const override { return true; }
 	// Used for determining what layout direction to use if adaptive layout is turned off
@@ -86,34 +92,39 @@ private:
 
 	void          CopySelectedLayersInfo(std::function<string(const CObjectLayer*)> retrieveInfoFunc) const;
 
-	virtual bool  OnNew() override;
-	virtual bool  OnNewFolder() override;
-	virtual bool  OnImport() override;
-	virtual bool  OnReload() override;
+	bool  OnNew();
+	bool  OnNewFolder();
+	bool  OnImport();
+	bool  OnReload();
 
 	virtual bool  OnFind() override;
-	virtual bool  OnDelete() override;
+	bool  OnDelete();
 
-	virtual bool  OnRename() override;
-	virtual bool  OnLock() override;
-	virtual bool  OnUnlock() override;
-	virtual bool  OnToggleLock() override;
-	virtual bool  OnIsolateLocked() override;
-	virtual bool  OnHide() override;
-	virtual bool  OnUnhide() override;
-	virtual bool  OnToggleHide() override;
-	virtual bool  OnIsolateVisibility() override;
+	bool  OnRename();
+	bool  OnLock();
+	bool  OnUnlock();
+	bool  OnToggleLock();
+	void          OnLockAll();
+	void          OnUnlockAll();
+	bool  OnIsolateLocked();
+	bool  OnHide();
+	bool  OnUnhide();
+	bool  OnToggleHide();
+	void          OnHideAll();
+	void          OnUnhideAll();
+	bool  OnIsolateVisibility();
 
 	// Context sensitive hierarchical operations
-	virtual bool OnCollapseAll() override;
-	virtual bool OnExpandAll() override;
-	virtual bool OnLockChildren() override;
-	virtual bool OnUnlockChildren() override;
-	virtual bool OnToggleLockChildren() override;
-	virtual bool OnHideChildren() override;
-	virtual bool OnUnhideChildren() override;
-	virtual bool OnToggleHideChildren() override;
+	bool OnCollapseAll();
+	bool OnExpandAll();
+	bool OnLockChildren();
+	bool OnUnlockChildren();
+	bool OnToggleLockChildren();
+	bool OnHideChildren();
+	bool OnUnhideChildren();
+	bool OnToggleHideChildren();
 
+	bool         OnLockReadOnlyLayers();
 	bool         OnMakeLayerActive();
 	bool         IsFirstChildLocked(const std::vector<CObjectLayer*>& layers) const;
 	bool         DoChildrenMatchLockedState(const std::vector<CObjectLayer*>& layers, bool isLocked) const;

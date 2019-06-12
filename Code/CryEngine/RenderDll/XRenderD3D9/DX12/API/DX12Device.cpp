@@ -66,7 +66,7 @@ CDevice* CDevice::Create(CCryDX12GIAdapter* pAdapter, D3D_FEATURE_LEVEL* pFeatur
 	// On console there is only one adapter (the default one which can be reached using nullptr)
 	if (pDXGIAdapter == nullptr)
 	{
-		DX12_ASSERT(0, "No adapter available to create D3D12 Device!");
+		DX12_ERROR("No adapter available to create D3D12 Device!");
 		return NULL;
 	}
 #endif // !CRY_PLATFORM_CONSOLE
@@ -87,7 +87,7 @@ CDevice* CDevice::Create(CCryDX12GIAdapter* pAdapter, D3D_FEATURE_LEVEL* pFeatur
 
 	if (hr != S_OK)
 	{
-		DX12_ASSERT(0, "Failed to create D3D12 Device!");
+		DX12_ERROR("Failed to create D3D12 Device!");
 		return NULL;
 	}
 
@@ -286,7 +286,7 @@ CDevice::CDevice(ID3D12Device* d3d12Device, D3D_FEATURE_LEVEL featureLevel, UINT
 
 	// Timer query heap
 	{
-		D3D12_QUERY_HEAP_DESC desc = { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, 4096, m_nodeMask };
+		D3D12_QUERY_HEAP_DESC desc = { D3D12_QUERY_HEAP_TYPE_TIMESTAMP, MAX_TIMESTAMP_GROUPS * 1024 /*CDeviceTimestampGroup_Base::kMaxTimestamps*/, m_nodeMask };
 		m_TimestampHeap.Init(this, desc);
 	}
 
@@ -639,7 +639,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE CDevice::CacheSampler(const D3D12_SAMPLER_DESC* pDes
 	{
 		if (!m_SamplerCacheFreeTable.size() && (m_SamplerCache.GetCursor() >= m_SamplerCache.GetCapacity()))
 		{
-			DX12_ASSERT(false, "Sampler heap is too small!");
+			DX12_ERROR("Sampler heap is too small!");
 			return INVALID_CPU_DESCRIPTOR_HANDLE;
 		}
 
@@ -683,7 +683,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE CDevice::CacheShaderResourceView(const D3D12_SHADER_
 	{
 		if (!m_ShaderResourceDescriptorFreeTable.size() && (m_ShaderResourceDescriptorCache.GetCursor() >= m_ShaderResourceDescriptorCache.GetCapacity()))
 		{
-			DX12_ASSERT(false, "ShaderResourceView heap is too small!");
+			DX12_ERROR("ShaderResourceView heap is too small!");
 			return INVALID_CPU_DESCRIPTOR_HANDLE;
 		}
 
@@ -720,7 +720,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE CDevice::CacheUnorderedAccessView(const D3D12_UNORDE
 	{
 		if (!m_UnorderedAccessDescriptorFreeTable.size() && (m_UnorderedAccessDescriptorCache.GetCursor() >= m_UnorderedAccessDescriptorCache.GetCapacity()))
 		{
-			DX12_ASSERT(false, "UnorderedAccessView heap is too small!");
+			DX12_ERROR("UnorderedAccessView heap is too small!");
 			return INVALID_CPU_DESCRIPTOR_HANDLE;
 		}
 
@@ -757,7 +757,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE CDevice::CacheDepthStencilView(const D3D12_DEPTH_STE
 	{
 		if (!m_DepthStencilDescriptorFreeTable.size() && (m_DepthStencilDescriptorCache.GetCursor() >= m_DepthStencilDescriptorCache.GetCapacity()))
 		{
-			DX12_ASSERT(false, "DepthStencilView heap is too small!");
+			DX12_ERROR("DepthStencilView heap is too small!");
 			return INVALID_CPU_DESCRIPTOR_HANDLE;
 		}
 
@@ -794,7 +794,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE CDevice::CacheRenderTargetView(const D3D12_RENDER_TA
 	{
 		if (!m_RenderTargetDescriptorFreeTable.size() && (m_RenderTargetDescriptorCache.GetCursor() >= m_RenderTargetDescriptorCache.GetCapacity()))
 		{
-			DX12_ASSERT(false, "RenderTargetView heap is too small!");
+			DX12_ERROR("RenderTargetView heap is too small!");
 			return INVALID_CPU_DESCRIPTOR_HANDLE;
 		}
 
@@ -1039,7 +1039,8 @@ void CDevice::FlushReleaseHeap(const UINT64 (&completedFenceValues)[CMDQUEUE_NUM
 				}
 				else
 				{
-					CRY_DX12_VERIFY(it->first->Release() == 0, "Invalid ref-count of D3D12 resource %s, memory will leak!", GetDebugName(it->first).c_str());
+					if (it->first->Release() != 0)
+						DX12_ERROR("Invalid ref-count of D3D12 resource %s, memory will leak!", GetDebugName(it->first).c_str());
 
 					releases++;
 				}
@@ -1067,7 +1068,8 @@ void CDevice::FlushReleaseHeap(const UINT64 (&completedFenceValues)[CMDQUEUE_NUM
 				// so even when the CResource is destructed and the d3d resource
 				// given up for release, they can continue being in use
 				// This means the ref-count here doesn't necessarily need to be 0
-				CRY_DX12_VERIFY(it->second.back().pObject->Release() == 0, "Invalid ref-count of D3D12 resource %s, memory will leak!", GetDebugName(it->second.back().pObject).c_str());
+				if (it->second.back().pObject->Release() != 0)
+					DX12_ERROR("Invalid ref-count of D3D12 resource %s, memory will leak!", GetDebugName(it->second.back().pObject).c_str());
 
 				it->second.pop_back();
 				evictions++;
@@ -1289,6 +1291,25 @@ void CDevice::FlushAndWaitForGPU()
 	m_Scheduler.Flush(false);
 	m_Scheduler.GetCommandListPool(CMDQUEUE_GRAPHICS).GetAsyncCommandQueue().Flush();
 	m_Scheduler.GetCommandListPool(CMDQUEUE_GRAPHICS).WaitForFenceOnCPU();
+}
+
+void CDevice::FlushAndWaitForGPU(const UINT64 (&fenceValues)[CMDQUEUE_NUM])
+{
+	// Submit pending command-lists containing some fence-value in case there are left-overs, make sure it's flushed to and executed on the hardware
+	auto& rScheduler = GetScheduler();
+	auto& rFenceSet = rScheduler.GetFenceManager();
+
+	// Group-FlushToFence()
+	rScheduler.SubmitCommands(CMDQUEUE_GRAPHICS, false, fenceValues[CMDQUEUE_GRAPHICS]);
+	rScheduler.SubmitCommands(CMDQUEUE_COMPUTE , false, fenceValues[CMDQUEUE_COMPUTE ]);
+	rScheduler.SubmitCommands(CMDQUEUE_COPY    , false, fenceValues[CMDQUEUE_COPY    ]);
+
+	rScheduler.GetCommandListPool(CMDQUEUE_GRAPHICS).GetAsyncCommandQueue().Flush(fenceValues[CMDQUEUE_GRAPHICS]);
+	rScheduler.GetCommandListPool(CMDQUEUE_COMPUTE ).GetAsyncCommandQueue().Flush(fenceValues[CMDQUEUE_COMPUTE ]);
+	rScheduler.GetCommandListPool(CMDQUEUE_COPY    ).GetAsyncCommandQueue().Flush(fenceValues[CMDQUEUE_COPY    ]);
+
+	// Group-WaitForFence()
+	rFenceSet.WaitForFence(fenceValues);
 }
 
 }

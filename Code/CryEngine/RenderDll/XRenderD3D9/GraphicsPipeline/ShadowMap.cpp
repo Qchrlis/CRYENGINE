@@ -78,6 +78,9 @@ void CShadowMapStage::Init()
 		// hardcoded point samplers
 		m_perPassResources.SetSampler(8, EDefaultSamplerStates::PointWrap, shaderStages);
 		m_perPassResources.SetSampler(9, EDefaultSamplerStates::PointClamp, shaderStages);
+
+		// particle resources
+		m_graphicsPipeline.SetParticleBuffers(true, m_perPassResources, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 	}
 
 	// Create resource layout
@@ -104,41 +107,61 @@ void CShadowMapStage::Init()
 
 		StaticArray<int, MAX_GSM_LODS_NUM> nResolutions = gRenDev->GetCachedShadowsResolution();
 
-		ReAllocateResources({ nShadowTexFormat, nShadowPoolSize, nShadowCacheFormat, nShadowCacheLODs, nShadowCacheCascades, nResolutions });
-	}
+		const SShadowConfig shadowConfig = { nShadowTexFormat, nShadowPoolSize, nShadowCacheFormat, nShadowCacheLODs, nShadowCacheCascades, nResolutions };
+		ReAllocateResources(shadowConfig);
 
-	// Providing the right texture is not necessary at all since shadow map rendering is using texture from depth target pool.
-	// It is only necessary to provide a texture with right format.
-	_smart_ptr<CTexture> pDummyRsmDepth = m_pTexRT_ShadowPool;
-	_smart_ptr<CTexture> pDummyRsmPoolDepth = m_pTexRT_ShadowPool;
+		{
+			// Providing the right texture is not necessary at all since shadow map rendering is using texture from depth target pool.
+			// It is only necessary to provide a texture with right format.
+
+			_smart_ptr<CTexture> pDummyDL = CTexture::GetOrCreateTextureObject("DL_DUMMY", 0, 0, 1,
+				m_pTexRT_ShadowPool->GetTextureType(),
+				m_pTexRT_ShadowPool->GetFlags(),
+				GetShadowTexFormat(shadowConfig, ePass_DirectionalLight));
+
+			_smart_ptr<CTexture> pDummyDLC = CTexture::GetOrCreateTextureObject("DLC_DUMMY", 0, 0, 1,
+				m_pTexRT_ShadowPool->GetTextureType(),
+				m_pTexRT_ShadowPool->GetFlags(),
+				GetShadowTexFormat(shadowConfig, ePass_DirectionalLightCached));
+
+			_smart_ptr<CTexture> pDummyLL = CTexture::GetOrCreateTextureObject("LL_DUMMY", 0, 0, 1,
+				m_pTexRT_ShadowPool->GetTextureType(),
+				m_pTexRT_ShadowPool->GetFlags(),
+				GetShadowTexFormat(shadowConfig, ePass_LocalLight));
+
+			_smart_ptr<CTexture> pDummyRsmDepth     = m_pTexRT_ShadowPool;
+			_smart_ptr<CTexture> pDummyRsmPoolDepth = m_pTexRT_ShadowPool;
 
 #if defined(FEATURE_SVO_GI)
-	CSvoRenderer::GetRsmTextures(m_pRsmColorTex, m_pRsmNormalTex, m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
+			CSvoRenderer::GetRsmTextures(m_pRsmColorTex, m_pRsmNormalTex, m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
 
-	if (!CTexture::IsTextureExist(m_pRsmColorTex))
-	{
-		pDummyRsmDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_DIRECTIONAL_LIGHT_DUMMY", 0, 0, 1,
-		                                                    m_pTexRT_ShadowPool->GetTextureType(),
-		                                                    m_pTexRT_ShadowPool->GetFlags(),
-		                                                    m_pTexRT_ShadowPool->GetDstFormat());
-	}
-	if (!CTexture::IsTextureExist(m_pRsmPoolColorTex))
-	{
-		pDummyRsmPoolDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_LOCAL_LIGHT_DUMMY", 0, 0, 1,
-		                                                        m_pTexRT_ShadowPool->GetTextureType(),
-		                                                        m_pTexRT_ShadowPool->GetFlags(),
-		                                                        m_pTexRT_ShadowPool->GetDstFormat());
-	}
+			if (!CTexture::IsTextureExist(m_pRsmColorTex))
+			{
+				pDummyRsmDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_DIRECTIONAL_LIGHT_DUMMY", 0, 0, 1,
+					m_pTexRT_ShadowPool->GetTextureType(),
+					m_pTexRT_ShadowPool->GetFlags(),
+					GetShadowTexFormat(shadowConfig, ePass_DirectionalLightRSM));
+			}
+
+			if (!CTexture::IsTextureExist(m_pRsmPoolColorTex))
+			{
+				pDummyRsmPoolDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_LOCAL_LIGHT_DUMMY", 0, 0, 1,
+					m_pTexRT_ShadowPool->GetTextureType(),
+					m_pTexRT_ShadowPool->GetFlags(),
+					GetShadowTexFormat(shadowConfig, ePass_LocalLightRSM));
+			}
 #endif
 
-	// preallocate typically used passes (NOTE: at least one pass is needed for PSO compilation)
-	// *INDENT-OFF*
-	m_ShadowMapPasses[ePass_DirectionalLight      ].Init(this, 8,  m_pTexRT_ShadowPool,                     nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_DirectionalLightCached].Init(this, 8,  m_pTexRT_ShadowPool,                     nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_LocalLight            ].Init(this, 16, m_pTexRT_ShadowPool,                     nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_DirectionalLightRSM   ].Init(this, 1,  pDummyRsmDepth,                          m_pRsmColorTex,     m_pRsmNormalTex);
-	m_ShadowMapPasses[ePass_LocalLightRSM         ].Init(this, 1,  pDummyRsmPoolDepth,                      m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
-	// *INDENT-ON*
+			// preallocate typically used passes (NOTE: at least one pass is needed for PSO compilation)
+			// *INDENT-OFF*
+			m_ShadowMapPasses[ePass_DirectionalLight      ].Init(this,  8, pDummyDL,           nullptr,            nullptr);
+			m_ShadowMapPasses[ePass_DirectionalLightCached].Init(this,  8, pDummyDLC,          nullptr,            nullptr);
+			m_ShadowMapPasses[ePass_LocalLight            ].Init(this, 16, pDummyLL,           nullptr,            nullptr);
+			m_ShadowMapPasses[ePass_DirectionalLightRSM   ].Init(this,  1, pDummyRsmDepth,     m_pRsmColorTex,     m_pRsmNormalTex);
+			m_ShadowMapPasses[ePass_LocalLightRSM         ].Init(this,  1, pDummyRsmPoolDepth, m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
+			// *INDENT-ON*
+		}
+	}
 }
 
 void CShadowMapStage::ReAllocateResources(const SShadowConfig shadowConfig)
@@ -178,9 +201,11 @@ void CShadowMapStage::ReAllocateResources(const SShadowConfig shadowConfig)
 			{
 				char szName[64];
 				cry_sprintf(szName, "$ShadowMapCached_%d_%d", i, m_graphicsPipeline.GetUniqueIdentifierName().c_str());
-				pTx = CTexture::GetOrCreateDepthStencil(szName, nResolutions[i], nResolutions[i], Clr_FarPlane, eTT_2D, FT_DONT_STREAM, texFormat);
+				// Only look for a (possibly) existing CTexture object (without re-creating the device-resource)
+				pTx = CTexture::GetOrCreateTextureObject(szName, nResolutions[i], nResolutions[i], 1, eTT_2D, FT_DONT_STREAM, texFormat);
 			}
 
+			// Check if the embedded device-resource matches our config and re-create it when it differs only
 			pTx->Invalidate(nResolutions[i], nResolutions[i], texFormat);
 
 			// delete existing texture in case it's not needed anymore
@@ -213,6 +238,8 @@ void CShadowMapStage::ReAllocateResources(const SShadowConfig shadowConfig)
 				{
 					const int width = cachedPass.m_pDepthTarget->GetWidth();
 					const int height = cachedPass.m_pDepthTarget->GetHeight();
+
+					// Check if the embedded device-resource matches our config and re-create it when it differs only
 					cachedPass.m_pDepthTarget->Invalidate(width, height, texFormat);
 
 					if (!CTexture::IsTextureExist(cachedPass.m_pDepthTarget))
@@ -469,7 +496,7 @@ bool CShadowMapStage::CreatePipelineState(const SGraphicsPipelineStateDescriptio
 	if (psoDesc.m_RenderState & GS_ALPHATEST)
 		psoDesc.m_ShaderFlags_RT |= g_HWSR_MaskBit[HWSR_ALPHATEST];
 
-	if (psoDesc.m_bAllowTesselation)
+	if (psoDesc.m_bAllowTesselation && (psoDesc.m_PrimitiveType < ept1ControlPointPatchList || psoDesc.m_PrimitiveType > ept4ControlPointPatchList))
 	{
 		psoDesc.m_PrimitiveType = ept3ControlPointPatchList;
 		psoDesc.m_ObjectStreamMask |= VSM_NORMALS;
@@ -529,7 +556,7 @@ void CShadowMapStage::Update()
 	pRenderView->PrepareShadowViews();
 
 	// prepare the shadow pool
-	CDeferredShading::Instance().SetupPasses(pRenderView);
+	m_graphicsPipeline.GetDeferredShading()->SetupPasses(pRenderView);
 
 	// now prepare passes for each frustum
 	for (auto& passGroup : m_ShadowMapPasses)
@@ -698,7 +725,12 @@ bool CShadowMapStage::PrepareOutputsForPass(const SShadowFrustumToRender& frustu
 		    frustum.m_eFrustumType == ShadowMapFrustum::e_PerObject ||
 		    frustum.m_eFrustumType == ShadowMapFrustum::e_Nearest)
 		{
-			pDepthTarget = CTexture::GetOrCreateDepthStencilPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, frustum.clearValue, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
+			// Only look for a (possibly) existing CTexture object (without re-creating the device-resource)
+			pDepthTarget = CTexture::GetOrCreateTextureObjectPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, 1, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
+
+			// Check if the embedded device-resource exist, and only create a new one when this is the first request
+			if (!CTexture::IsTextureExist(pDepthTarget))
+				pDepthTarget->CreateDepthStencil(frustum.m_eReqTF, frustum.clearValue);
 		}
 		else
 		{
@@ -800,7 +832,13 @@ _smart_ptr<CTexture> CShadowMapStage::PrepareOutputsForFrustumWithCaching(const 
 				pClearDepthMapProvider = &cachedPass;
 				clearMode = CShadowMapPass::eClearMode_CopyDepthMap;
 
-				pDepthTarget = CTexture::GetOrCreateDepthStencilPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, frustum.clearValue, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
+				// Only look for a (possibly) existing CTexture object (without re-creating the device-resource)
+				pDepthTarget = CTexture::GetOrCreateTextureObjectPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, 1, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
+
+				// Check if the embedded device-resource exist, and only create a new one when this is the first request
+				if (!CTexture::IsTextureExist(pDepthTarget))
+					pDepthTarget->CreateDepthStencil(frustum.m_eReqTF, frustum.clearValue);
+
 				break;
 			}
 		}
@@ -991,6 +1029,9 @@ bool CShadowMapStage::CShadowMapPass::PrepareResources(const CRenderView* pMainV
 
 		m_perPassResources.SetConstantBuffer(eConstantBufferShaderSlot_PerView, m_pPerViewConstantBuffer.get(), EShaderStage_Vertex | EShaderStage_Hull | EShaderStage_Domain | EShaderStage_Pixel);
 	}
+
+	// particle resources
+	m_pShadowMapStage->m_graphicsPipeline.SetParticleBuffers(false, m_perPassResources, EDefaultResourceViews::Default, EShaderStage_AllWithoutCompute);
 
 	CRY_ASSERT(!m_perPassResources.HasChangedBindPoints()); // Cannot change resource layout after init. It is baked into the shaders
 	m_pPerPassResourceSet->Update(m_perPassResources);

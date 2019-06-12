@@ -237,6 +237,7 @@
         <file alias="common/general_view_horizonal.ico">icons/general_view_horizonal.ico</file>
         <file alias="common/general_view_folder_tree.ico">icons/general_view_folder_tree.ico</file>
         <file alias="common/general_view_recursive_view.ico">icons/general_view_recursive_view.ico</file>
+        <file alias="common/general_hide_irrelevant_folders.ico">icons/general_hide_irrelevant_folders.ico</file>      
         <file alias="common/general_icon_missing.ico">icons/general_icon_missing.ico</file>
         <file alias="common/general_dropdown_arrow.ico">icons/general_dropdown_arrow.ico</file>
         <file alias="common/general_dropdown_triangle.ico">icons/general_dropdown_triangle.ico</file>
@@ -317,7 +318,6 @@
         <file alias="General/goto.ico">icons/general_goto.ico</file>
         <file alias="General/Grid_Snap.ico">icons/general_Grid_Snap.ico</file>
         <file alias="General/Group.ico">icons/general_group.ico</file>
-        <file alias="General/Instant_Editing.ico">icons/general_instant_editing.ico</file>      
         <file alias="General/History_Redo.ico">icons/general_History_Redo.ico</file>
         <file alias="General/History_Undo.ico">icons/general_History_Undo.ico</file>
         <file alias="General/History_Undo_List.ico">icons/general_History_Undo_List.ico</file>

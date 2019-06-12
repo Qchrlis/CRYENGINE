@@ -63,7 +63,7 @@ CModelViewport::CModelViewport(const char* settingsPath)
 
 	m_camRadius = 10;
 
-	m_moveSpeed = 0.1;
+	m_moveSpeed = 0.1f;
 	m_LightRotationRadian = 0.0f;
 
 	m_weaponIK = false;
@@ -182,7 +182,7 @@ CModelViewport::CModelViewport(const char* settingsPath)
 		gEnv->pInput->AddEventListener(this);
 	}
 
-	m_pIAudioListener = gEnv->pAudioSystem->CreateListener(m_viewTM);
+	m_pIAudioListener = gEnv->pAudioSystem->CreateListener(m_viewTM, "ModelViewport");
 	m_AABB.Reset();
 }
 

@@ -1203,7 +1203,6 @@ int32 CAttachmentManager::RemoveAttachmentByNameCRC(uint32 nameCRC, uint32 loadi
 
 void CAttachmentManager::sAttachedCharactersCache::Push(CCharInstance* character, IAttachment* attachment)
 {
-	m_attachmentsToIdx[attachment] = m_attachments.size();
 	m_attachments.push_back(attachment);
 	m_characters.push_back(character);
 }
@@ -1212,17 +1211,19 @@ void CAttachmentManager::sAttachedCharactersCache::Clear()
 {
 	m_characters.clear();
 	m_attachments.clear();
-	m_attachmentsToIdx.clear();
 }
 
 void CAttachmentManager::sAttachedCharactersCache::Erase(IAttachment* attachment)
 {
-	if (m_attachmentsToIdx.find(attachment)!=m_attachmentsToIdx.end())
+	const int s = m_attachments.size();
+	for (int idx = 0; idx < s; ++idx)
 	{
-		int idx = m_attachmentsToIdx[attachment];
-		m_attachmentsToIdx.erase(attachment);
-		m_attachments.erase(m_attachments.begin() + idx);
-		m_characters.erase(m_characters.begin() + idx);
+		if (m_attachments[idx] == attachment)
+		{
+			m_attachments.erase(m_attachments.begin() + idx);
+			m_characters.erase(m_characters.begin() + idx);
+			break;
+		}
 	}
 }
 
@@ -1844,7 +1845,7 @@ void CAttachmentManager::DrawAttachments(SRendParams& rParams, const Matrix34& r
 	}
 #endif
 	{
-		LOADING_TIME_PROFILE_SECTION_NAMED("SkinAttachments");
+		CRY_PROFILE_SECTION(PROFILE_LOADING_ONLY, "SkinAttachments");
 		for (uint32 i = m_sortedRanges[eRange_SkinMesh].begin; i < m_sortedRanges[eRange_SkinMesh].end; i++)
 		{
 			IAttachment* pIAttachment = m_arrAttachments[i];
@@ -1889,7 +1890,7 @@ void CAttachmentManager::DrawAttachments(SRendParams& rParams, const Matrix34& r
 		}
 	}
 	{
-		LOADING_TIME_PROFILE_SECTION_NAMED("VertexClothAttachments");
+		CRY_PROFILE_SECTION(PROFILE_LOADING_ONLY, "VertexClothAttachments");
 		for (uint32 i = m_sortedRanges[eRange_VertexClothOrPendulumRow].begin; i < m_sortedRanges[eRange_VertexClothOrPendulumRow].end; i++)
 		{
 			IAttachment* pIAttachment = m_arrAttachments[i];
@@ -2151,7 +2152,7 @@ void CAttachmentManager::GetMemoryUsage(ICrySizer* pSizer) const
 
 void CAttachmentManager::SortByType()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	m_TypeSortingRequired = 0;
 	CDefaultSkeleton& rDefaultSkeleton = *m_pSkelInstance->m_pDefaultSkeleton;
 	memset(m_sortedRanges, 0, sizeof(m_sortedRanges));
@@ -2419,8 +2420,8 @@ void CAttachmentManager::ProcessAttachment(IAttachment* pSocket)
 			const auto parentNodeFlags = pParentRenderNode ? pParentRenderNode->GetRndFlags() : IRenderNode::RenderFlagsType();
 			const auto attachmentFlags = pSocket->GetFlags();
 
-			const bool hidden = ((attachmentFlags & FLAGS_ATTACH_VISIBLE) == 0);
-			pRenderNode->Hide(hidden);
+			const bool hidden = (parentNodeFlags & ERF_HIDDEN) || (!(attachmentFlags & FLAGS_ATTACH_VISIBLE));
+			pRenderNode->SetRndFlags(ERF_HIDDEN, hidden);
 
 			const bool nearest = (parentNodeFlags & ERF_FOB_NEAREST) && (!(attachmentFlags & FLAGS_ATTACH_EXCLUDE_FROM_NEAREST));
 			pRenderNode->SetRndFlags(ERF_FOB_NEAREST, nearest);
@@ -2434,6 +2435,9 @@ void CAttachmentManager::ProcessAttachment(IAttachment* pSocket)
 			const bool hiddenInShadowPass = (!(parentNodeFlags & ERF_CASTSHADOWMAPS)) || (attachmentFlags & FLAGS_ATTACH_HIDE_SHADOW_PASS);
 			pRenderNode->SetRndFlags(ERF_CASTSHADOWMAPS, !hiddenInShadowPass);
 
+			const bool movesEveryFrame = (parentNodeFlags & ERF_MOVES_EVERY_FRAME) != 0;
+			pRenderNode->SetRndFlags(ERF_MOVES_EVERY_FRAME, movesEveryFrame);
+
 			if (pRenderNode->GetRndFlags() & ERF_CASTSHADOWMAPS)
 			{
 				pRenderNode->SetRndFlags(ERF_HAS_CASTSHADOWMAPS, true);
@@ -2445,15 +2449,34 @@ void CAttachmentManager::ProcessAttachment(IAttachment* pSocket)
 		pRenderNode->SetRndFlags(ERF_NO_3DENGINE_REGISTRATION, auxiliaryViewport);
 
 		// This check prevents attachments from being added to the scene graph when the parent character isn't.
-		if (auxiliaryViewport || (m_pSkelInstance->GetParentRenderNode() && m_pSkelInstance->GetParentRenderNode()->m_pOcNode))
+		if (auxiliaryViewport || (m_pSkelInstance->GetParentRenderNode() && m_pSkelInstance->GetParentRenderNode()->GetParent()))
 		{
 			pRenderNode->SetMatrix(Matrix34{ pSocket->GetAttWorldAbsolute() * pSocket->GetAdditionalTransformation() });
 		}
 		else
 		{
-			if (pRenderNode->m_pOcNode)
+			if (pRenderNode->GetParent())
 			{
 				gEnv->p3DEngine->UnRegisterEntityAsJob(pRenderNode);
+			}
+		}
+
+		// Propagates SCameraSpaceParams through the attachment hierarchy to increase camera-space (ERF_FOB_NEAREST) rendering precision.
+		if (m_pSkelInstance->GetParentRenderNode())
+		{
+			const stl::optional<SCameraSpaceParams>& cameraSpaceParams = m_pSkelInstance->GetParentRenderNode()->GetCameraSpaceParams();
+			if (cameraSpaceParams)
+			{
+				assert(pRenderNode->GetRndFlags() & ERF_FOB_NEAREST);
+
+				const Vec3& modelSpaceOffset = (pSocket->GetAttModelRelative() * pSocket->GetAdditionalTransformation()).t;
+				const Vec3& worldSpaceOffset = m_pSkelInstance->m_location.s * (m_pSkelInstance->m_location.q * modelSpaceOffset);
+
+				pRenderNode->SetCameraSpaceParams(SCameraSpaceParams{ cameraSpaceParams->cameraSpacePosition, cameraSpaceParams->worldSpaceOffset + worldSpaceOffset });
+			}
+			else
+			{
+				pRenderNode->SetCameraSpaceParams(stl::nullopt);
 			}
 		}
 	}
@@ -2668,7 +2691,7 @@ void CAttachmentManager::SwapAttachmentObject(SAttachmentBase* pAttachment, IAtt
 			m_pAttachment->Immediate_SwapBinding(m_pNewAttachment);
 		}
 	private:
-		IAttachment* m_pNewAttachment;
+		_smart_ptr<IAttachment> m_pNewAttachment;
 	};
 	CMD_BUF_PUSH_COMMAND(m_modificationCommandBuffer, CSwapAttachmentObject, pAttachment, pNewAttachment);
 }

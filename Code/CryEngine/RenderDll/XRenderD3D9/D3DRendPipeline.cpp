@@ -30,6 +30,7 @@
 #include "GraphicsPipeline/SceneGBuffer.h"
 #include "GraphicsPipeline/SceneCustom.h"
 #include "GraphicsPipeline/SceneDepth.h"
+#include "GraphicsPipeline/TiledLightVolumes.h"
 #include "GraphicsPipeline/PostAA.h"
 #include "Common/RenderView.h"
 #include "CompiledRenderObject.h"
@@ -96,6 +97,8 @@ void CD3D9Renderer::EF_Init()
 	if (!m_pWaterSimMgr)
 		m_pWaterSimMgr = new CWater;
 
+	CSceneRenderPass::Initialize();
+
 	//SDynTexture::CreateShadowPool();
 
 	m_waterUpdateInfo.m_fLastWaterFOVUpdate    = 0;
@@ -108,8 +111,6 @@ void CD3D9Renderer::EF_Init()
 	m_nMaterialAnisoHighSampler   = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(SSamplerState(FILTER_ANISO16X, false));
 	m_nMaterialAnisoLowSampler    = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(SSamplerState(FILTER_ANISO4X, false));
 	m_nMaterialAnisoSamplerBorder = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(SSamplerState(FILTER_ANISO16X, eSamplerAddressMode_Border, eSamplerAddressMode_Border, eSamplerAddressMode_Border, 0x0));
-
-	CDeferredShading::CreateDeferredShading();
 
 #ifdef ENABLE_BENCHMARK_SENSOR
 	if (!m_benchmarkRendererSensor)
@@ -131,8 +132,6 @@ void CD3D9Renderer::EF_Exit(bool bFastShutdown)
 
 	//if (m_pStereoRenderer)
 	//	m_pStereoRenderer->ReleaseResources();
-
-	CDeferredShading::DestroyDeferredShading();
 
 	SAFE_DELETE(m_pWaterSimMgr);
 	SAFE_DELETE(m_pPostProcessMgr);
@@ -520,11 +519,16 @@ void CD3D9Renderer::RT_PreRenderScene(CRenderView* pRenderView)
 		(shaderRenderingFlags & SHDF_ALLOWPOSTPROCESS) != 0;
 	if (updateLightVolumes)
 	{
-		pActiveGraphicsPipeline->GetLightVolumeBuffer().UpdateContent();
+		CTiledLightVolumesStage* pLightVolumeStage = pActiveGraphicsPipeline->GetStage<CTiledLightVolumesStage>();
+		if (pLightVolumeStage)
+		{
+			pLightVolumeStage->GetLightVolumeBuffer().UpdateContent();
+		}
+		
 		lightVolumeOldFrameID = newFrameID;
 	}
 
-	m_nStencilMaskRef = STENCIL_VALUE_OUTDOORS + 1;
+	pActiveGraphicsPipeline->m_nStencilMaskRef = STENCIL_VALUE_OUTDOORS + 1;
 }
 
 void CD3D9Renderer::RT_PostRenderScene(CRenderView* pRenderView)
@@ -551,7 +555,7 @@ void CD3D9Renderer::RT_PostRenderScene(CRenderView* pRenderView)
 void CD3D9Renderer::RT_RenderScene(CRenderView* pRenderView)
 {
 	FUNCTION_PROFILER_RENDERER();
-	PROFILE_LABEL_SCOPE(pRenderView->IsRecursive() ? "SCENE_REC" : "SCENE");
+	PROFILE_LABEL_SCOPE_DYNAMIC((pRenderView->IsRecursive() ? "SCENE_REC" : "SCENE"), "SCENE");
 
 	gcpRendD3D->SetCurDownscaleFactor(gcpRendD3D->m_CurViewportScale);
 
@@ -604,7 +608,7 @@ void CD3D9Renderer::RT_RenderScene(CRenderView* pRenderView)
 
 		pActiveGraphicsPipeline->Update(EShaderRenderingFlags(shaderRenderingFlags));
 
-		// Creating CompiledRenederObjects should happen after Update() call of the GraphicsPipeline, as it requires access to initialized Render Targets
+		// Creating CompiledRenderObjects should happen after Update() call of the GraphicsPipeline, as it requires access to initialized Render Targets
 		// If some pipeline stage manages/retires resources used in compiled objects, they should also be handled in Update()
 		pRenderView->CompileModifiedRenderObjects();
 
@@ -735,7 +739,7 @@ void CD3D9Renderer::EF_EndEf3D(const int nPrecacheUpdateIdSlow, const int nPreca
 	m_streamZonesRoundId[0] = max(m_streamZonesRoundId[0], nPrecacheUpdateIdFast);
 	m_streamZonesRoundId[1] = max(m_streamZonesRoundId[1], nPrecacheUpdateIdSlow);
 
-	m_p3DEngineCommon.Update(passInfo);
+	m_p3DEngineCommon[passInfo.ThreadID()].Update(passInfo);
 
 	if (CV_r_NoDraw == 4)
 	{
@@ -823,8 +827,10 @@ bool CD3D9Renderer::StoreGBufferToAtlas(const RectI& rcDst, int nSrcWidth, int n
 {
 	bool bRes = true;
 
-	CTexture* pGBuffD = CRendererResources::s_ptexSceneDiffuse;
-	CTexture* pGBuffN = CRendererResources::s_ptexSceneNormalsMap;
+	const CGraphicsPipelineResources& pipelineResources = pGraphicsPipeline->GetPipelineResources();
+
+	CTexture* pGBuffD = pipelineResources.m_pTexSceneDiffuse;
+	CTexture* pGBuffN = pipelineResources.m_pTexSceneNormalsMap;
 
 	CTexture* pDstD = (CTexture*)pDataD;
 	CTexture* pDstN = (CTexture*)pDataN;

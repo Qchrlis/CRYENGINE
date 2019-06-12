@@ -9,6 +9,7 @@
 #include "D3DOpenVR.h"
 
 #include <Common/RenderDisplayContext.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #define MGPU_STEREO
 
@@ -172,7 +173,7 @@ void CD3DStereoRenderer::OnStereoModeChanged()
 
 void CD3DStereoRenderer::InitDeviceBeforeD3D()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 #if defined(USE_NV_API)
 	bool availableDriverNV = false;
 	uint8 enabled = 0;
@@ -232,7 +233,7 @@ void CD3DStereoRenderer::InitDeviceBeforeD3D()
 
 void CD3DStereoRenderer::InitDeviceAfterD3D()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	g_pMgpu = NULL;
 #if (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120) && defined(AMD_LIQUID_VR)
@@ -651,7 +652,7 @@ void CD3DStereoRenderer::PrepareFrame()
 
 	CTimeValue timePresentBegin = gEnv->pTimer->GetAsyncTime();
 	m_pHmdRenderer->PrepareFrame(static_cast<uint64_t>(gcpRendD3D->GetRenderFrameID()));
-	SRenderStatistics::Write().m_Summary.waitForGPU += gEnv->pTimer->GetAsyncTime().GetDifferenceInSeconds(timePresentBegin);
+	SRenderStatistics::Write().m_Summary.waitForGPU_RT += gEnv->pTimer->GetAsyncTime().GetDifferenceInSeconds(timePresentBegin);
 
 	m_framePrepared = true;
 }

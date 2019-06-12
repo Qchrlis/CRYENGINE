@@ -615,6 +615,15 @@ public:
 	void SetupAIEnvironment();
 	void SetAIHacksConfiguration();
 
+	void TrySubsystemInitCommunicationSystem();
+	void TrySubsystemInitScriptBind();
+	void TrySubsystemInitFormationSystem();
+	void TrySubsystemInitTacticalPointSystem();
+	void TrySubsystemInitCoverSystem();
+	void TrySubsystemInitGroupSystem();
+	void TrySubsystemInitORCA();
+	void TrySubsystemInitTargetTrackSystem();
+
 	/// Our own internal serialisation - just serialise our state (but not the things
 	/// we own that are capable of serialising themselves)
 	void SerializeInternal(TSerialize ser);
@@ -912,7 +921,6 @@ public:
 	                       const ColorB& worldColor, bool drawWorld);
 	void DebugDrawCrowdControl();
 	void DebugDrawRadar();
-	void DebugDrawDistanceLUT();
 	void DrawRadarPath(CPipeUser* pPipeUser, const Matrix34& world, const Matrix34& screen);
 	void DebugDrawRecorderRange() const;
 	void DebugDrawShooting() const;

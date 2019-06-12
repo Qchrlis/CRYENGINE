@@ -1,4 +1,4 @@
-// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 #pragma once
 
 #include "EditorCommonAPI.h"
@@ -6,6 +6,7 @@
 #include "ProxyModels/ItemModelAttribute.h"
 #include "CrySandbox/CrySignal.h"
 #include "AssetSystem/AssetType.h"
+#include "IAssetBrowserContext.h"
 
 #include <QWidget>
 
@@ -14,6 +15,7 @@ class CAssetFolderFilterModel;
 class CAssetFoldersView;
 class CBreadcrumbsBar;
 class CLineEditDelegate;
+class CFilteredFolders;
 class QAction;
 class QAdvancedTreeView;
 class QAttributeFilterProxyModel;
@@ -33,7 +35,7 @@ struct IUIContext;
 #define ASSET_BROWSER_USE_PREVIEW_WIDGET 0
 
 //! The dockable class for the Asset Browser
-class EDITOR_COMMON_API CAssetBrowser : public CDockableEditor
+class EDITOR_COMMON_API CAssetBrowser : public CDockableEditor, public IAssetBrowserContext
 {
 	Q_OBJECT
 	Q_PROPERTY(int buttonsSpacing READ GetButtonsSpacing WRITE SetButtonsSpacing)
@@ -44,15 +46,19 @@ public:
 	static CCrySignal<void(CAbstractMenu&, const std::vector<CAsset*>&, const std::vector<string>& folders, const std::shared_ptr<IUIContext>&)> s_signalContextMenuRequested;
 
 	CAssetBrowser(bool bHideEngineFolder = false, QWidget* pParent = nullptr);
+	CAssetBrowser(const std::vector<CAssetType*>& assetTypes, bool bHideEngineFolder = false, QWidget* pParent = nullptr);
 	virtual ~CAssetBrowser();
 
-	std::vector<CAsset*> GetSelectedAssets() const;
-	CAsset*              GetLastSelectedAsset() const;
+	//extract actual content from the selection
+	virtual void                GetSelection(std::vector<CAsset*>& assets, std::vector<string>& folders) const override;
 
-	void                 SelectAsset(const char* szPath) const;
-	void                 SelectAsset(const CAsset& asset) const;
+	virtual std::vector<string> GetSelectedFolders() const override;
 
-	std::vector<string>  GetSelectedFolders() const;
+	std::vector<CAsset*>        GetSelectedAssets() const;
+	CAsset*                     GetLastSelectedAsset() const;
+
+	void                        SelectAsset(const char* szPath) const;
+	void                        SelectAsset(const CAsset& asset) const;
 
 	//CEditor implementation
 	virtual const char* GetEditorName() const override { return "Asset Browser"; }
@@ -72,23 +78,25 @@ public:
 		Max
 	};
 
-	bool         IsRecursiveView() const;
-	bool         IsFoldersViewVisible() const;
+	void    SetViewMode(ViewMode viewMode);
 
-	void         SetViewMode(ViewMode viewMode);
-	void         SetRecursiveView(bool recursiveView);
-	void         SetFoldersViewVisible(bool isVisible);
+	bool    IsRecursiveView() const;
+	void    SetRecursiveView(bool recursiveView);
 
-	CAsset*      QueryNewAsset(const CAssetType& type, const CAssetType::SCreateParams* pCreateParams);
+	bool    IsFoldersViewVisible() const;
+	void    SetFoldersViewVisible(bool isVisible);
 
-	void         NotifyContextMenuCreation(CAbstractMenu& menu, const std::vector<CAsset*>& assets, const std::vector<string>& folders);
+	bool    AreIrrelevantFoldersHidden() const;
+	void    HideIrrelevantFolders(bool isHidden);
 
-	int          GetButtonsSpacing() const       { return m_buttonsSpacing; }
-	void         SetButtonsSpacing(int val)      { m_buttonsSpacing = val; }
-	int          GetButtonGroupsSpacing() const  { return m_buttonGroupsSpacing; }
-	void         SetButtonGroupsSpacing(int val) { m_buttonGroupsSpacing = val; }
+	CAsset* QueryNewAsset(const CAssetType& type, const CAssetType::SCreateParams* pCreateParams);
 
-	virtual void customEvent(QEvent* pEvent) override;
+	void    NotifyContextMenuCreation(CAbstractMenu& menu, const std::vector<CAsset*>& assets, const std::vector<string>& folders);
+
+	int     GetButtonsSpacing() const       { return m_buttonsSpacing; }
+	void    SetButtonsSpacing(int val)      { m_buttonsSpacing = val; }
+	int     GetButtonGroupsSpacing() const  { return m_buttonGroupsSpacing; }
+	void    SetButtonGroupsSpacing(int val) { m_buttonGroupsSpacing = val; }
 
 signals:
 	//! This signal is emitted whenever the selection of folders or assets changes.
@@ -99,6 +107,7 @@ protected:
 
 	QAttributeFilterProxyModel* GetAttributeFilterProxyModel();
 	QItemSelectionModel*        GetItemSelectionModel();
+	const QItemSelectionModel*  GetItemSelectionModel() const;
 	QAdvancedTreeView*          GetDetailsView();
 	QThumbnailsView*            GetThumbnailsView();
 
@@ -113,24 +122,28 @@ protected:
 	virtual void UpdatePreview(const QModelIndex& currentIndex);
 
 	// Adaptive layouts enables editor owners to make better use of space
-	bool            SupportsAdaptiveLayout() const override { return true; }
+	bool                          SupportsAdaptiveLayout() const override { return true; }
 	// Triggered on resize for editors that support adaptive layouts
-	void            OnAdaptiveLayoutChanged() override;
+	void                          OnAdaptiveLayoutChanged() override;
 	// Used for determining what layout direction to use if adaptive layout is turned off
-	Qt::Orientation GetDefaultOrientation() const override { return Qt::Horizontal; }
+	Qt::Orientation               GetDefaultOrientation() const override { return Qt::Horizontal; }
+
+	virtual const IEditorContext* GetContextObject() const override      { return this; };
 
 private:
+	void               SetModel(CAssetFolderFilterModel* pModel);
 	void               InitActions();
+	void               InitAssetTypeFilter(const QStringList assetTypeNames);
 	void               InitNewNameDelegates();
 	void               InitViews(bool bHideEngineFolder);
 	void               InitMenus();
 	void               InitAssetsView();
 	void               InitDetailsView();
 	void               InitThumbnailsView();
-	QLayout*           CreateToolBars();
+	void               WaitUntilAssetsAreReady();
 	QWidget*           CreateAssetsViewSelector();
 
-	void               FillCreateAssetMenu(CAbstractMenu* menu, const QString& folder);
+	void               FillCreateAssetMenu(CAbstractMenu* menu, bool enable);
 
 	void               BeginCreateAsset(const CAssetType& type, const CAssetType::SCreateParams* pCreateParams);
 	void               EndCreateAsset();
@@ -139,99 +152,102 @@ private:
 
 	virtual bool       eventFilter(QObject* object, QEvent* event) override;
 
-	//extract actual content from the selection for further processing
-	void ProcessSelection(std::vector<CAsset*>& assets, std::vector<string>& folders) const;
+	void               OnSelectionChanged();
 
-	void OnSelectionChanged();
+	void               UpdateSelectionDependantActions();
+	void               UpdatePasteActionState();
 
-	void UpdateSelectionDependantActions();
-	void UpdatePasteActionState();
+	void               OnContextMenu();
+	void               AppendFilterDependenciesActions(CAbstractMenu* pAbstractMenu, const CAsset* pAsset);
+	void               OnFolderViewContextMenu();
 
-	void OnContextMenu();
-	void AppendFilterDependenciesActions(CAbstractMenu* pAbstractMenu, const CAsset* pAsset);
-	void OnFolderViewContextMenu();
+	void               CreateContextMenu(bool isFolderView = false);
 
-	void CreateContextMenu(bool isFolderView = false);
+	void               BuildContextMenuForEmptiness(CAbstractMenu& abstractMenu);
+	void               BuildContextMenuForFolders(const std::vector<string>& folders, CAbstractMenu& abstractMenu);
+	void               BuildContextMenuForAssets(const std::vector<CAsset*>& assets, const std::vector<string>& folders, CAbstractMenu& abstractMenu);
 
-	void BuildContextMenuForEmptiness(CAbstractMenu& abstractMenu);
-	void BuildContextMenuForFolders(const std::vector<string>& folders, CAbstractMenu& abstractMenu);
-	void BuildContextMenuForAssets(const std::vector<CAsset*>& assets, const std::vector<string>& folders, CAbstractMenu& abstractMenu);
+	void               AddWorkFilesMenu(CAbstractMenu& abstractMenu);
 
-	void AddWorkFilesMenu(CAbstractMenu& abstractMenu);
+	bool               HasSelectedModifiedAsset() const;
 
-	bool HasSelectedModifiedAsset() const;
+	void               OnFolderSelectionChanged(const QStringList& selectedFolders);
+	void               OnActivated(const QModelIndex& index);
+	void               OnCurrentChanged(const QModelIndex& current, const QModelIndex& previous);
+	void               Delete(const std::vector<CAsset*>& assets);
 
-	void OnFolderSelectionChanged(const QStringList& selectedFolders);
-	void OnActivated(const QModelIndex& index);
-	void OnCurrentChanged(const QModelIndex& current, const QModelIndex& previous);
-	void OnDelete(const std::vector<CAsset*>& assets);
+	void               OnRenameAsset(CAsset& asset);
+	void               OnRenameFolder(const QString& folder);
+	void               OnOpenInExplorer(const QString& folder);
+	void               OnNavBack();
+	void               OnNavForward();
+	void               OnBreadcrumbClick(const QString& text, const QVariant& data);
+	void               OnBreadcrumbsTextChanged(const QString& text);
 
-	void OnRenameAsset(CAsset& asset);
-	void OnRenameFolder(const QString& folder);
-	void OnOpenInExplorer(const QString& folder);
-	void OnNavBack();
-	void OnNavForward();
-	void OnBreadcrumbClick(const QString& text, const QVariant& data);
-	void OnBreadcrumbsTextChanged(const QString& text);
+	void               GenerateThumbnailsAsync(const string& folder, const std::function<void()>& finalize = std::function<void()>());
 
-	void GenerateThumbnailsAsync(const string& folder, const std::function<void()>& finalize = std::function<void()>());
+	void               OnSearch(bool isNewSearch);
+	void               UpdateNavigation(bool clearHistory);
+	void               UpdateBreadcrumbsBar(const QString& path);
+	void               UpdateNonEmptyFolderList();
 
-	void OnSearch(bool isNewSearch);
-	void UpdateNavigation(bool clearHistory);
-	void UpdateBreadcrumbsBar(const QString& path);
+	void               EditNewAsset();
 
-	void EditNewAsset();
+	bool               OnDiscardChanges();
+	bool               OnShowInFileExplorer();
+	bool               OnGenerateThumbmails();
+	bool               OnSaveAll();
+	bool               OnRecursiveView();
+	bool               OnFolderTreeView();
+	bool               OnManageWorkFiles();
+	bool               OnDetailsView();
+	bool               OnThumbnailsView();
+	bool               OnSplitHorizontalView();
+	bool               OnSplitVerticalView();
+	bool               OnGenerateRepairAllMetadata();
+	bool               OnReimport();
+	bool               OnHideIrrelevantFolders();
 
-	bool OnDiscardChanges();
-	bool OnShowInFileExplorer();
-	bool OnGenerateThumbmails();
-	bool OnSaveAll();
-	bool OnRecursiveView();
-	bool OnFolderTreeView();
-	bool OnManageWorkFiles();
-	bool OnDetailsView();
-	bool OnThumbnailsView();
-	bool OnSplitHorizontalView();
-	bool OnSplitVerticalView();
-	bool OnGenerateRepairAllMetadata();
-	bool OnReimport();
-
-	// CEditor impl
+	// CEditor
 	virtual bool OnFind() override;
-	virtual bool OnDelete() override;
-	virtual bool OnOpen() override;
-	virtual bool OnCopy() override;
-	virtual bool OnPaste() override;
-	virtual bool OnDuplicate() override;
-	virtual bool OnImport() override;
-	virtual bool OnNewFolder() override;
-	virtual bool OnRename() override;
-	virtual bool OnSave() override;
+	// ~CEditor
+
+	bool OnDelete();
+	bool OnOpen();
+	bool OnCopy();
+	bool OnPaste();
+	bool OnDuplicate();
+	bool OnImport();
+	bool OnNewFolder();
+	bool OnRename();
+	bool OnSave();
 
 	void         Paste(bool pasteNextToOriginal);
 
 	//ui components
 	CAssetFoldersView* m_pFoldersView = nullptr;
 	CBreadcrumbsBar*   m_pBreadcrumbs = nullptr;
-	QCommandAction*    m_pActionRecursiveView = nullptr;
-	QCommandAction*    m_pActionShowFoldersView = nullptr;
-	QCommandAction*    m_pActionManageWorkFiles = nullptr;
-	QCommandAction*    m_pActionShowInFileExplorer = nullptr;
+	QCommandAction*    m_pActionCopy = nullptr;
 	QCommandAction*    m_pActionCopyName = nullptr;
 	QCommandAction*    m_pActionCopyPath = nullptr;
-	QCommandAction*    m_pActionShowThumbnails = nullptr;
+	QCommandAction*    m_pActionDelete = nullptr;
+	QCommandAction*    m_pActionDiscardChanges = nullptr;
+	QCommandAction*    m_pActionDuplicate = nullptr;
+	QCommandAction*    m_pActionGenerateRepairMetaData = nullptr;
+	QCommandAction*    m_pActionGenerateThumbnails = nullptr;
+	QCommandAction*    m_pActionHideIrrelevantFolders = nullptr;
+	QCommandAction*    m_pActionManageWorkFiles = nullptr;
+	QCommandAction*    m_pActionPaste = nullptr;
+	QCommandAction*    m_pActionRecursiveView = nullptr;
+	QCommandAction*    m_pActionReimport = nullptr;
+	QCommandAction*    m_pActionRename = nullptr;
+	QCommandAction*    m_pActionSave = nullptr;
 	QCommandAction*    m_pActionShowDetails = nullptr;
+	QCommandAction*    m_pActionShowFoldersView = nullptr;
+	QCommandAction*    m_pActionShowInFileExplorer = nullptr;
 	QCommandAction*    m_pActionShowSplitHorizontally = nullptr;
 	QCommandAction*    m_pActionShowSplitVertically = nullptr;
-	QCommandAction*    m_pActionDelete = nullptr;
-	QCommandAction*    m_pActionRename = nullptr;
-	QCommandAction*    m_pActionCopy = nullptr;
-	QCommandAction*    m_pActionDuplicate = nullptr;
-	QCommandAction*    m_pActionSave = nullptr;
-	QCommandAction*    m_pActionPaste = nullptr;
-	QCommandAction*    m_pActionReimport = nullptr;
-	QCommandAction*    m_pActionDiscardChanges = nullptr;
-	QCommandAction*    m_pActionGenerateRepairMetaData = nullptr;
+	QCommandAction*    m_pActionShowThumbnails = nullptr;
 #if ASSET_BROWSER_USE_PREVIEW_WIDGET
 	QCommandAction*    m_pActionShowPreview = nullptr;
 #endif
@@ -253,7 +269,7 @@ private:
 	std::unique_ptr<CLineEditDelegate>          m_pDetailsViewNewNameDelegate; // Note that delegates are not owned by view.
 	std::unique_ptr<CLineEditDelegate>          m_pThumbnailViewNewNameDelegate;
 	std::unique_ptr<QAttributeFilterProxyModel> m_pAttributeFilterProxyModel;
-	std::unique_ptr<QTimer>                     m_pQuickEditTimer;
+	std::unique_ptr<CFilteredFolders>           m_pFilteredFolders;
 
 	//state variables
 	QVector<QStringList> m_navigationHistory;

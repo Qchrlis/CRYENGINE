@@ -1077,6 +1077,8 @@ add_sources("CryRenderer_uber_6.cpp"
 		"GraphicsPipeline/BillboardGraphicsPipeline.cpp"
 		"GraphicsPipeline/Bloom.h"
 		"GraphicsPipeline/Bloom.cpp"
+		"GraphicsPipeline/CharacterToolGraphicsPipeline.h"
+		"GraphicsPipeline/CharacterToolGraphicsPipeline.cpp"
 		"GraphicsPipeline/ClipVolumes.h"
 		"GraphicsPipeline/ClipVolumes.cpp"
 		"GraphicsPipeline/ColorGrading.h"
@@ -1294,8 +1296,10 @@ if (RENDERER_DX12)
 	if (WINDOWS)
 		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /NODEFAULTLIB:libcmt.lib")
 		target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib dxguid d3d12 dxgi d3dcompiler Ole32 Gdi32 wininet Shell32 png16 tiff)
+		target_link_libraries(${THIS_PROJECT} PRIVATE WinPixEventRuntime)
 	elseif(DURANGO)
 		target_link_libraries(${THIS_PROJECT} PRIVATE ws2_32 SmartGlassInterop d3d12_x d3dcompiler dxguid xg_x uuid kernelx)
+		target_link_libraries(${THIS_PROJECT} PRIVATE PIXEvt)
 	endif()
 
 	if(USE_DXC)
@@ -1310,17 +1314,18 @@ if (RENDERER_VULKAN)
 	add_subdirectory("${CRY_LIBS_DIR}/spirv-cross" "${CMAKE_CURRENT_BINARY_DIR}/spirv-cross")
 
 	CryEngineModule(CryRenderVulkan FORCE_SHARED_WIN PCH "../StdAfx.cpp" SOLUTION_FOLDER "CryEngine")
-	target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_RENDERER_VULKAN=10 -DDO_RENDERSTATS -D_RENDERER -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS)
 	target_include_directories(${THIS_PROJECT} PRIVATE ..)
 	target_include_directories(${THIS_PROJECT} PRIVATE "${SDK_DIR}/squish-ccr")
 	target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib spirv-cross)
 	if(WINDOWS)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_RENDERER_VULKAN=11 -DDO_RENDERSTATS -D_RENDERER -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS)
 		target_include_directories(${THIS_PROJECT} PRIVATE "${SDK_DIR}/VulkanSDK/Include")
 		target_link_libraries(${THIS_PROJECT} PRIVATE Ole32 Gdi32 wininet Shell32 png16 dxguid vulkan-1 tiff)
 		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /NODEFAULTLIB:libcmt.lib")
 		set_libpath_flag()
 		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " ${LIBPATH_FLAG}\"${SDK_DIR}/VulkanSDK/Lib\"")
 	elseif(ANDROID)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_RENDERER_VULKAN=10 -DDO_RENDERSTATS -D_RENDERER -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS)
 		target_compile_options(${THIS_PROJECT} PRIVATE -std=c++14)
 		find_library(LIBVULKAN vulkan PATHS "${CMAKE_ANDROID_NDK}/platforms/android-${CMAKE_SYSTEM_VERSION}/arch-${CMAKE_ANDROID_ARCH_FOLDER}/usr/lib/")
 		target_include_directories(${THIS_PROJECT} PRIVATE "${CMAKE_ANDROID_NDK}/sources/third_party/vulkan/src/include")
@@ -1328,6 +1333,7 @@ if (RENDERER_VULKAN)
 		target_link_libraries(${THIS_PROJECT} PRIVATE SDL2)
 		target_link_libraries(${THIS_PROJECT} PRIVATE ${LIBVULKAN})
 	elseif(LINUX)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_RENDERER_VULKAN=11 -DDO_RENDERSTATS -D_RENDERER -DSPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS)
 		target_compile_options(${THIS_PROJECT} PRIVATE -std=c++14)
 		find_library(LIBVULKAN vulkan PATHS "${SDK_DIR}/VulkanSDK/x86_64/lib")
 		target_include_directories(${THIS_PROJECT} PRIVATE "${SDK_DIR}/VulkanSDK/x86_64/include")
@@ -1351,7 +1357,7 @@ if (RENDERER_VULKAN)
 			-Wno-invalid-offsetof
 			-Wno-null-conversion
 		)
-    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 		target_compile_options(${THIS_PROJECT} PRIVATE
 			-Wno-unused-function
 			-Wno-unused-value
@@ -1375,8 +1381,9 @@ if (RENDERER_VULKAN)
 			-Wno-address
 			-Wno-format
 			-Wno-switch
+			-Wno-psabi
 		)
-    endif()
+  endif()
 else()
 	CryFileContainer(CryRenderVulkan SOLUTION_FOLDER "CryEngine")
 endif()

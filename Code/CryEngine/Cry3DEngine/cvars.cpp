@@ -216,7 +216,7 @@ void CVars::Init()
 	                   " z = freeze particle system"
 	                   " t = used by developers to debug test algorithms");
 	REGISTER_CVAR(e_ParticlesThread, 4, VF_NULL,
-	              "Enable particle threading: 1 = basic, 4 = optimal");
+	              "Enable particle threading: 1 = basic, 4 = optimal, 5 = asynchronous");
 	REGISTER_CVAR(e_ParticlesCollisions, 3,  VF_BITFIELD,
 	              "Enable collisions for non-physical particles:\n"
 	              "  1 = terrain only, 2 = static objects also, 3 = dynamic objects also");
@@ -433,6 +433,8 @@ void CVars::Init()
 	              "Always render full extent of last cached shadow cascade. 0=disabled, 1=enabled");
 	REGISTER_CVAR(e_ShadowsCacheMaxNodesPerFrame, 50, VF_NULL,
 	              "Maximum number of octree nodes to visit during incremental update. default: 50");
+	REGISTER_CVAR(e_ShadowsCacheJobs, 1, VF_NULL,
+	              "Jobify gathering of shadow casters for the shadow cache");
 	REGISTER_CVAR_CB(e_DynamicDistanceShadows, 1, VF_NULL,
 	                 "Enable dynamic distance shadows, 0 = disable, 1 = enable only for movable object types, 2 = enable for all object types, -1 = don't render dynamic distance shadows", OnDynamicDistanceShadowsVarChange);
 	DefineConstIntCVar(e_ShadowsCascadesCentered, 0, VF_NULL,
@@ -768,6 +770,8 @@ void CVars::Init()
 	              "Turns on on-demand physicalization (0=off, 1=vegetation only[default], 2=brushes only, 3=brushes&vegetation");
 	REGISTER_CVAR(e_OnDemandMaxSize, 20.0f, VF_NULL,
 	              "Specifies the maximum size of vegetation objects that are physicalized on-demand");
+	DefineConstIntCVar(e_Sleep, 0, VF_CHEAT,
+	                   "Sleep X in C3DEngine::Draw");
 	REGISTER_CVAR(e_ObjectLayersActivation, (m_bEditor ? 0 : 1), VF_CHEAT, "Allow game to activate/deactivate object layers");
 	DefineConstIntCVar(e_ObjectLayersActivationPhysics, 1, VF_CHEAT,
 	                   "Allow game to create/free physics of objects: 0: Disable; 1: All; 2: Water only.");
@@ -818,7 +822,7 @@ void CVars::Init()
 
 	REGISTER_CVAR(e_Lods, 1, VF_NULL,
 	              "Load and use LOD models for static geometry");
-	DefineConstIntCVar(e_LodFaceArea, 1, VF_NULL,
+	REGISTER_CVAR(e_LodFaceArea, 1, VF_NULL,
 	                   "Use geometric mean of faces area to compute LOD");
 	DefineConstIntCVar(e_LodsForceUse, 1, VF_NULL,
 	                   "Force using LODs even if triangle count do not suit");
@@ -850,7 +854,7 @@ void CVars::Init()
 	REGISTER_CVAR(e_SkyQuality, 1, VF_NULL,
 	              "Quality of dynamic sky: 1 (very high), 2 (high).");
 	REGISTER_CVAR(e_SkyType, 1, VF_NULL,
-	              "Type of sky used: 0 (static), 1 (dynamic).");
+	              "Type of sky used: 0 (low-spec), 1 (default-spec).");
 
 	DefineConstIntCVar(e_DisplayMemoryUsageIcon, e_DisplayMemoryUsageIconDefault, VF_NULL,
 	                   "Turns On/Off the memory usage icon rendering: 1 on, 0 off.");

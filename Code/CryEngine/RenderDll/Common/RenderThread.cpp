@@ -159,7 +159,7 @@ SRenderThread::~SRenderThread()
 
 bool SRenderThread::RC_CreateDevice()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 #if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_APPLE || CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID
 	return gcpRendD3D->RT_CreateDevice();
@@ -298,22 +298,31 @@ void SRenderThread::RC_EndFrame(bool bWait)
 	SyncMainWithRender(true);
 }
 
-void SRenderThread::RC_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter)
+void SRenderThread::RC_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
 {
 	if (!pTP)
 		return;
 
+	if (CRenderer::CV_r_TexturesStreamingDebug)
+	{
+		const char* const sTexFilter = CRenderer::CV_r_TexturesStreamingDebugfilter->GetString();
+		if (sTexFilter != 0 && sTexFilter[0])
+			if (strstr(pTP->GetName(), sTexFilter))
+				CryLogAlways("CD3D9Renderer::RC_PrecacheResource: Mip=%5.2f nUpdateId=%4d (%s) Name=%s",
+					fMipFactor, nUpdateId, (Flags & FPR_SINGLE_FRAME_PRIORITY_UPDATE) ? "NEAR" : "FAR", pTP->GetName());
+	}
+
 	if (IsRenderThread())
 	{
 		// NOTE: bypasses time measurement!
-		gRenDev->PrecacheTexture(pTP, fMipFactor, fTimeToReady, Flags, nUpdateId, nCounter);
+		gRenDev->PrecacheTexture(pTP, fMipFactor, fTimeToReady, Flags, nUpdateId);
 		return;
 	}
 
 	_smart_ptr<ITexture> pRefTexture = pTP;
 	ExecuteRenderThreadCommand([=]
 	{
-		RC_PrecacheResource(pRefTexture.get(), fMipFactor, fTimeToReady, Flags, nUpdateId, nCounter);
+		RC_PrecacheResource(pRefTexture.get(), fMipFactor, fTimeToReady, Flags, nUpdateId);
 	}, ERenderCommandFlags::LevelLoadingThread_defer);
 }
 
@@ -467,7 +476,7 @@ void SRenderThread::ProcessCommands()
 		{
 		case eRC_CreateDevice:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_CreateDevice");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_CreateDevice");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_CreateDevice");
 				START_PROFILE_RT();
 				m_bSuccessful &= gcpRendD3D->RT_CreateDevice();
@@ -476,7 +485,7 @@ void SRenderThread::ProcessCommands()
 			break;
 		case eRC_ResetDevice:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_ResetDevice");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_ResetDevice");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_ResetDevice");
 				START_PROFILE_RT();
 				if (m_eVideoThreadMode == eVTM_Disabled)
@@ -487,7 +496,7 @@ void SRenderThread::ProcessCommands()
 	#if CRY_PLATFORM_DURANGO
 		case eRC_SuspendDevice:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_SuspendDevice");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_SuspendDevice");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_SuspendDevice");
 				START_PROFILE_RT();
 				if (m_eVideoThreadMode == eVTM_Disabled)
@@ -497,7 +506,7 @@ void SRenderThread::ProcessCommands()
 			break;
 		case eRC_ResumeDevice:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_ResumeDevice");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_ResumeDevice");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_ResumeDevice");
 				START_PROFILE_RT();
 				if (m_eVideoThreadMode == eVTM_Disabled)
@@ -513,7 +522,7 @@ void SRenderThread::ProcessCommands()
 
 		case eRC_BeginFrame:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_BeginFrame");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_BeginFrame");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_BeginFrame");
 				START_PROFILE_RT();
 				m_displayContextKey = ReadCommand<SDisplayContextKey>(n);
@@ -532,7 +541,7 @@ void SRenderThread::ProcessCommands()
 			break;
 		case eRC_EndFrame:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_EndFrame");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_EndFrame");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_EndFrame");
 				START_PROFILE_RT();
 				if (m_eVideoThreadMode == eVTM_Disabled)
@@ -577,7 +586,7 @@ void SRenderThread::ProcessCommands()
 
 		case eRC_LambdaCall:
 			{
-				CRY_PROFILE_REGION(PROFILE_RENDERER, "SRenderThread: eRC_LambdaCall");
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "SRenderThread: eRC_LambdaCall");
 				MEMSTAT_CONTEXT(EMemStatContextType::Other, "eRC_LambdaCall");
 				START_PROFILE_RT();
 				SRenderThreadLambdaCallback* pRTCallback = ReadCommand<SRenderThreadLambdaCallback*>(n);
@@ -611,7 +620,7 @@ void SRenderThread::Process()
 {
 	do
 	{
-		CRY_PROFILE_REGION(PROFILE_RENDERER, "Loop: RenderThread");
+		CRY_PROFILE_SECTION(PROFILE_RENDERER, "Loop: RenderThread");
 
 		CTimeValue Time = iTimer->GetAsyncTime();
 
@@ -819,7 +828,7 @@ void SRenderThread::FlushAndWait()
 // Flush current frame without waiting (should be called from main thread)
 void SRenderThread::SyncMainWithRender(bool bFrameToFrame)
 {
-	CRY_PROFILE_REGION_WAITING(PROFILE_RENDERER, "Wait - SyncMainWithRender");
+	CRY_PROFILE_SECTION_WAITING(PROFILE_RENDERER, "Wait - SyncMainWithRender");
 
 	if (!IsMultithreaded())
 	{
@@ -955,7 +964,7 @@ bool CRenderer::FlushRTCommands(bool bWait, bool bImmediatelly, bool bForce)
 
 bool CRenderer::ForceFlushRTCommands()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	return FlushRTCommands(true, true, true);
 }
 

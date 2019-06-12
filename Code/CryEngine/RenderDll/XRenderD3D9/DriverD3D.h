@@ -359,9 +359,6 @@ public:
 	virtual unsigned int UploadToVideoMemoryCube(unsigned char* data, int w, int h, ETEX_Format eTFSrc, ETEX_Format eTFDst, int8 nummipmap, bool repeat = true, int filter = FILTER_BILINEAR, int Id = 0, const char* szCacheName = NULL, int flags = 0, EEndian eEndian = eLittleEndian, RectI* pRegion = NULL, bool bAsynDevTexCreation = false) final;
 	virtual unsigned int UploadToVideoMemory3D(unsigned char* data, int w, int h, int d, ETEX_Format eTFSrc, ETEX_Format eTFDst, int8 nummipmap, bool repeat = true, int filter = FILTER_BILINEAR, int Id = 0, const char* szCacheName = NULL, int flags = 0, EEndian eEndian = eLittleEndian, RectI* pRegion = NULL, bool bAsynDevTexCreation = false) final;
 	virtual void         UpdateTextureInVideoMemory(uint32 tnum, unsigned char* newdata, int posx, int posy, int w, int h, ETEX_Format eTF = eTF_R8G8B8A8, int posz = 0, int sizez = 1) override;
-	virtual bool         EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId, int nCounter) override;
-	virtual bool         EF_PrecacheResource(SShaderItem* pSI, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter) override;
-	virtual bool         EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter) override;
 	virtual void         RemoveTexture(unsigned int TextureId) override;
 
 	virtual void         PostLevelUnload() override;
@@ -387,27 +384,27 @@ public:
 	// CPU stalls due to the rect lock call since the buffer will already be in system
 	// memory when it is called
 	// Inputs :
-	//			pDstARGBA8			:	Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface)
+	//			pDstRGB8			:	Pointer to a buffer that will hold the captured frame (should be at least 3*dstWidth*dstHeight for RGB surface).
 	//			destinationWidth	:	Width of the frame to copy
 	//			destinationHeight	:	Height of the frame to copy
 	//
 	//			Note :	If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions
 	//					of the surface are used for the copy
 	//
-	virtual bool CaptureFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight) override;
+	virtual bool CaptureFrameBufferFast(unsigned char* pDstRGB8, int destinationWidth, int destinationHeight) override;
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Copy a captured surface to a buffer
 	//
 	// Inputs :
-	//			pDstARGBA8			:	Pointer to a buffer that will hold the captured frame (should be at least 4*dstWidth*dstHieght for RGBA surface)
+	//			pDstRGB8			:	Pointer to a buffer that will hold the captured frame (should be at least 3*dstWidth*dstHeight for RGB surface).
 	//			destinationWidth	:	Width of the frame to copy
 	//			destinationHeight	:	Height of the frame to copy
 	//
 	//			Note :	If dstWidth or dstHeight is larger than the current surface dimensions, the dimensions
 	//					of the surface are used for the copy
 	//
-	virtual bool CopyFrameBufferFast(unsigned char* pDstRGBA8, int destinationWidth, int destinationHeight) override;
+	virtual bool CopyFrameBufferFast(unsigned char* pDstRGB8, int destinationWidth, int destinationHeight) override;
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////
 	// This routine registers a callback address that is called when a new frame is available
@@ -924,7 +921,7 @@ inline void CD3D9Renderer::WaitForAsynchronousDevice() const
 #if DURANGO_ENABLE_ASYNC_DIPS
 	if (m_nAsyncDeviceState)
 	{
-		CRY_PROFILE_REGION_WAITING(PROFILE_RENDERER, "Sync Async DIPS");
+		CRY_PROFILE_SECTION_WAITING(PROFILE_RENDERER, "Sync Async DIPS");
 
 		while (m_nAsyncDeviceState)
 		{

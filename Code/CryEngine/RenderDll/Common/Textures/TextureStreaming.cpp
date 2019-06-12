@@ -591,12 +591,12 @@ const bool CTexture::IsParticularMipStreamed(float fMipFactor) const
 	return m_nMinMipVidUploaded <= nMip;
 }
 
-void CTexture::PrecacheAsynchronously(float fMipFactor, int nFlags, int nUpdateId, int nCounter)
+void CTexture::PrecacheAsynchronously(float fMipFactor, int nFlags, int nUpdateId)
 {
 	if (!IsStreamed())
 		return;   // already done
 
-	s_pTextureStreamer->UpdateMip(this, fMipFactor, nFlags, nUpdateId, nCounter);
+	s_pTextureStreamer->UpdateMip(this, fMipFactor, nFlags, nUpdateId);
 
 	// for distance streaming it's just the same as update rendering distance
 	StreamLoadFromCache(nFlags);
@@ -933,7 +933,7 @@ bool CTexture::StreamPrepare(CImageFilePtr&& pIM)
 
 bool CTexture::StreamPrepare_Finalise(bool bFromLoad)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	const bool bNative = (m_eSrcTileMode != eTM_None);
 
@@ -1565,7 +1565,7 @@ void CTexture::InitStreaming()
 
 void CTexture::RT_FlushStreaming(bool bAbort)
 {
-	CRY_PROFILE_REGION(PROFILE_RENDERER, "CTexture::RT_FlushStreaming");
+	CRY_PROFILE_SECTION(PROFILE_RENDERER, "CTexture::RT_FlushStreaming");
 
 	RT_FlushAllStreamingTasks(bAbort);
 

@@ -27,7 +27,8 @@
 	//#define RENDERER_ENABLE_LEGACY_PIPELINE
 #endif
 
-/* Choice of rendering pipeline:
+
+/* Choice of rendering pipeline: 
  * RENDERER_ENABLE_FULL_PIPELINE   - full rendering pipeline with all bells and whistles
  * RENDERER_ENABLE_MOBILE_PIPELINE - reduced rendering pipeline with limited features for mobile
  * Note that both pipelines can be enabled simultaneously and runtime-switched via r_GraphicsPipelineMobile cvar
@@ -111,6 +112,10 @@
 
 #if CRY_PLATFORM_DURANGO && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
 	#define DEVICE_SUPPORTS_PERFORMANCE_DEVICE
+	#define DEVICE_TEXTURE_STORE_OWNER 1
+#else
+	#undef  DEVICE_SUPPORTS_PERFORMANCE_DEVICE
+	#define DEVICE_TEXTURE_STORE_OWNER 0
 #endif
 
 #if CRY_PLATFORM_DURANGO
@@ -368,6 +373,13 @@ template<> inline void           safe_release<ID3D11Buffer>(ID3D11Buffer*& ptr);
 	#include <vulkan/vulkan.h>
 #endif
 
+
+#if CRY_RENDERER_VULKAN > 10
+#if !VK_VERSION_1_1
+#error ("Included Vulkan header files are not supporting Vulkan 1.1.")
+#endif
+#endif
+
 // Internal numbers:  10|0   (three decimal digits)
 // Direct3D numbers: 0xa|0?? (four hexadecimal digits)
 #if CRY_RENDERER_DIRECT3D
@@ -407,8 +419,6 @@ template<> inline void           safe_release<ID3D11Buffer>(ID3D11Buffer*& ptr);
 	#if !defined(RELEASE) || defined(ENABLE_PROFILING_CODE)
 		#define USE_PIX_DURANGO 1
 	#endif
-#elif CRY_PLATFORM_WINDOWS
-	#include <pix_win.h>
 #endif
 
 //////////////////////////////////////////////////////////////////////////
@@ -806,6 +816,7 @@ typedef D3DBaseView     CDeviceResourceView;
 //////////////////////////////////////////////////////////////////////////
 #define MAX_FRAME_LATENCY    3                          // At most 16 - 1 (DXGI limitation)
 #define MAX_FRAMES_IN_FLIGHT (MAX_FRAME_LATENCY + 1)    // Current frame and frames buffered by driver/GPU
+#define MAX_TIMESTAMP_GROUPS 16                         // Must be at least MAX_FRAMES_IN_FLIGHT+N (see PipelineProfiler)
 
 #if CRY_PLATFORM_DURANGO
 	#include <xg.h>
@@ -1271,6 +1282,7 @@ unsigned sizeOfMapS(Map& map)
 #include "GraphicsPipeline/MinimumGraphicsPipeline.h"
 #include "GraphicsPipeline/BillboardGraphicsPipeline.h"
 #include "GraphicsPipeline/MobileGraphicsPipeline.h"
+#include "GraphicsPipeline/CharacterToolGraphicsPipeline.h"
 
 /*-----------------------------------------------------------------------------
    Vector transformations.

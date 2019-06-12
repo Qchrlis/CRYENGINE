@@ -10,6 +10,7 @@
 #include "FileWriter.h"
 #include "FileLoader.h"
 #include "ImplManager.h"
+#include "ListenerManager.h"
 #include "NameValidator.h"
 #include "AssetIcons.h"
 #include "Common/IImpl.h"
@@ -42,8 +43,7 @@ CAudioControlsEditorPlugin::CAudioControlsEditorPlugin()
 	g_assetsManager.Initialize();
 	g_contextManager.Initialize();
 	g_implManager.LoadImpl();
-
-	ReloadData(EReloadFlags::ReloadSystemControls | EReloadFlags::SendSignals);
+	g_listenerManager.Initialize();
 
 	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CAudioControlsEditorPlugin");
 
